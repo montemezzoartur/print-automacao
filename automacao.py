@@ -139,6 +139,15 @@ class Automacao:
     def _buscar_e_processar(self):
         wait = WebDriverWait(self.driver, 10)
 
+        # Diagnóstico: lista botões e links visíveis
+        try:
+            for el in self.driver.find_elements(By.XPATH, "//button | //a | //input[@type='button' or @type='submit']"):
+                txt = (el.text or el.get_attribute("value") or "").strip()
+                if txt:
+                    self.log(f"Elemento: <{el.tag_name}> text='{txt}' id='{el.get_attribute('id')}'")
+        except Exception:
+            pass
+
         botao = self._encontrar_elemento(wait, [
             (By.XPATH, "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
             (By.XPATH, "//a[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
