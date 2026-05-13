@@ -51,13 +51,14 @@ class Automacao:
 
     def _abrir_navegador(self):
         import os
+        from webdriver_manager.microsoft import EdgeChromiumDriverManager
         options = Options()
         options.use_chromium = True
         driver_local = os.path.join(os.path.dirname(__file__), "msedgedriver.exe")
         if os.path.exists(driver_local):
             service = Service(driver_local)
         else:
-            service = Service()
+            service = Service(EdgeChromiumDriverManager().install())
         self.driver = webdriver.Edge(service=service, options=options)
         self.driver.maximize_window()
         self.driver.get(config.URL)
