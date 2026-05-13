@@ -27,8 +27,8 @@ class Automacao:
         self.rodando = True
         try:
             self._abrir_navegador()
-            self._fazer_login()
-            self.log("Login realizado. Monitorando a cada 30s...")
+            self._aguardar_login_manual()
+            self.log("Login detectado. Monitorando a cada 30s...")
             self._loop_principal()
         except Exception as e:
             self.log(f"Erro fatal: {e}")
@@ -50,14 +50,18 @@ class Automacao:
 
     def _abrir_navegador(self):
         options = Options()
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--remote-debugging-port=9222")
         self.driver = webdriver.Chrome(options=options)
         self.driver.maximize_window()
         self.driver.get(config.URL)
         self.log("Navegador aberto.")
+
+    def _aguardar_login_manual(self):
+        self.log("Faça login manualmente no Chrome. Aguardando...")
+        wait = WebDriverWait(self.driver, 300)
+        try:
+            wait.until(lambda d: "login" not in d.current_url.lower())
+        except TimeoutException:
+            raise Exception("Tempo de espera para login manual esgotado (5 min).")
 
     def _fazer_login(self):
         wait = WebDriverWait(self.driver, 15)
