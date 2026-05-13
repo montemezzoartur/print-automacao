@@ -152,7 +152,7 @@ class Automacao:
                 col_mod = i
             elif "CONV" in t:
                 col_convenio = i
-            elif "A" in t and ("O" in t):
+            elif "AÇ" in t or t == "ACOES" or t == "AÇÕES":
                 col_acoes = i
 
         if col_mod == -1 or col_convenio == -1:
