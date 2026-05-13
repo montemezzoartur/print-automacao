@@ -66,14 +66,6 @@ class Automacao:
     def _fazer_login(self):
         wait = WebDriverWait(self.driver, 15)
 
-        # Loga todos os inputs visíveis para diagnóstico
-        try:
-            inputs = self.driver.find_elements(By.TAG_NAME, "input")
-            for inp in inputs:
-                self.log(f"Input encontrado: type={inp.get_attribute('type')} name={inp.get_attribute('name')} id={inp.get_attribute('id')}")
-        except Exception:
-            pass
-
         campo_usuario = self._encontrar_elemento(wait, [
             (By.ID, "input-captchaems"),
             (By.NAME, "captchaems"),
@@ -88,7 +80,6 @@ class Automacao:
         ])
         if not campo_usuario:
             raise Exception("Campo de usuário não encontrado na página de login.")
-        self.log(f"Campo usuário encontrado: name={campo_usuario.get_attribute('name')} id={campo_usuario.get_attribute('id')}")
         campo_usuario.clear()
         campo_usuario.send_keys(config.USUARIO)
 
@@ -102,7 +93,6 @@ class Automacao:
         ])
         if not campo_senha:
             raise Exception("Campo de senha não encontrado na página de login.")
-        self.log(f"Campo senha encontrado: name={campo_senha.get_attribute('name')} id={campo_senha.get_attribute('id')}")
         campo_senha.clear()
         campo_senha.send_keys(config.SENHA)
 
@@ -115,10 +105,8 @@ class Automacao:
         ], clicavel=True)
 
         if botao_login:
-            self.log(f"Botão login encontrado: text='{botao_login.text}'")
             botao_login.click()
         else:
-            self.log("Botão login não encontrado, usando Enter.")
             from selenium.webdriver.common.keys import Keys
             campo_senha.send_keys(Keys.RETURN)
 
@@ -139,18 +127,9 @@ class Automacao:
     def _buscar_e_processar(self):
         wait = WebDriverWait(self.driver, 10)
 
-        # Diagnóstico: lista botões e links visíveis
-        try:
-            for el in self.driver.find_elements(By.XPATH, "//button | //a | //input[@type='button' or @type='submit']"):
-                txt = (el.text or el.get_attribute("value") or "").strip()
-                if txt:
-                    self.log(f"Elemento: <{el.tag_name}> text='{txt}' id='{el.get_attribute('id')}'")
-        except Exception:
-            pass
-
         botao = self._encontrar_elemento(wait, [
-            (By.XPATH, "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
-            (By.XPATH, "//a[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
+            (By.XPATH, "//button[contains(translate(.,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
+            (By.XPATH, "//a[contains(translate(.,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
             (By.XPATH, "//*[contains(@id,'buscar') or contains(@name,'buscar')]"),
         ], clicavel=True)
 
