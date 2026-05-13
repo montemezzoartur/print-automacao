@@ -58,25 +58,40 @@ class Automacao:
     def _fazer_login(self):
         wait = WebDriverWait(self.driver, 15)
 
+        # Loga todos os inputs visíveis para diagnóstico
+        try:
+            inputs = self.driver.find_elements(By.TAG_NAME, "input")
+            for inp in inputs:
+                self.log(f"Input encontrado: type={inp.get_attribute('type')} name={inp.get_attribute('name')} id={inp.get_attribute('id')}")
+        except Exception:
+            pass
+
         campo_usuario = self._encontrar_elemento(wait, [
             (By.NAME, "username"),
             (By.NAME, "user"),
+            (By.NAME, "login"),
             (By.ID, "username"),
             (By.ID, "user"),
+            (By.ID, "login"),
             (By.XPATH, "//input[@type='text']"),
+            (By.XPATH, "//input[not(@type) or @type='email']"),
         ])
         if not campo_usuario:
             raise Exception("Campo de usuário não encontrado na página de login.")
+        self.log(f"Campo usuário encontrado: name={campo_usuario.get_attribute('name')} id={campo_usuario.get_attribute('id')}")
         campo_usuario.clear()
         campo_usuario.send_keys(config.USUARIO)
 
         campo_senha = self._encontrar_elemento(wait, [
             (By.XPATH, "//input[@type='password']"),
             (By.NAME, "password"),
+            (By.NAME, "senha"),
             (By.ID, "password"),
+            (By.ID, "senha"),
         ])
         if not campo_senha:
             raise Exception("Campo de senha não encontrado na página de login.")
+        self.log(f"Campo senha encontrado: name={campo_senha.get_attribute('name')} id={campo_senha.get_attribute('id')}")
         campo_senha.clear()
         campo_senha.send_keys(config.SENHA)
 
@@ -85,11 +100,14 @@ class Automacao:
             (By.XPATH, "//input[@type='submit']"),
             (By.XPATH, "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'ENTRAR')]"),
             (By.XPATH, "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'LOGIN')]"),
-        ])
+            (By.XPATH, "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'ACESSAR')]"),
+        ], clicavel=True)
 
         if botao_login:
+            self.log(f"Botão login encontrado: text='{botao_login.text}'")
             botao_login.click()
         else:
+            self.log("Botão login não encontrado, usando Enter.")
             from selenium.webdriver.common.keys import Keys
             campo_senha.send_keys(Keys.RETURN)
 
