@@ -161,36 +161,51 @@ class Automacao:
             self.log("Colunas 'Mod.' ou 'Convênio' não identificadas na tabela.")
             return
 
-        linhas = self.driver.find_elements(By.XPATH, "//table//tbody//tr")
         processados = 0
+        pagina = 1
 
-        for linha in linhas:
+        while True:
+            linhas = self.driver.find_elements(By.XPATH, "//table//tbody//tr")
+
+            for linha in linhas:
+                try:
+                    colunas = linha.find_elements(By.TAG_NAME, "td")
+                    if len(colunas) <= max(col_mod, col_convenio):
+                        continue
+
+                    mod = colunas[col_mod].text.strip().upper()
+                    convenio = colunas[col_convenio].text.strip().upper()
+
+                    mod_ok = any(m in mod for m in config.MODS_ALVO)
+                    conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
+
+                    if mod_ok and conv_ok:
+                        if col_realizante >= 0 and col_realizante < len(colunas):
+                            realizante = colunas[col_realizante].text.strip()
+                            if realizante:
+                                continue
+
+                        self.log(f"Exame encontrado — Mod: {mod} | Convênio: {convenio}")
+                        self._clicar_icone_l(linha, colunas, col_acoes)
+                        processados += 1
+                        time.sleep(1)
+
+                except StaleElementReferenceException:
+                    break
+                except Exception as e:
+                    self.log(f"Erro ao analisar linha: {e}")
+
+            # Próxima página
             try:
-                colunas = linha.find_elements(By.TAG_NAME, "td")
-                if len(colunas) <= max(col_mod, col_convenio):
-                    continue
-
-                mod = colunas[col_mod].text.strip().upper()
-                convenio = colunas[col_convenio].text.strip().upper()
-
-                mod_ok = any(m in mod for m in config.MODS_ALVO)
-                conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
-
-                if mod_ok and conv_ok:
-                    if col_realizante >= 0 and col_realizante < len(colunas):
-                        realizante = colunas[col_realizante].text.strip()
-                        if realizante:
-                            continue
-
-                    self.log(f"Exame encontrado — Mod: {mod} | Convênio: {convenio}")
-                    self._clicar_icone_l(linha, colunas, col_acoes)
-                    processados += 1
-                    time.sleep(1)
-
-            except StaleElementReferenceException:
+                next_links = self.driver.find_elements(By.XPATH, "//a[normalize-space(text())='next >']")
+                if not next_links:
+                    break
+                pagina += 1
+                self.log(f"Avançando para página {pagina}...")
+                self.driver.execute_script("arguments[0].click();", next_links[0])
+                time.sleep(2)
+            except Exception:
                 break
-            except Exception as e:
-                self.log(f"Erro ao analisar linha: {e}")
 
         if processados == 0:
             self.log("Nenhum exame com os critérios definidos encontrado.")
@@ -199,16 +214,13 @@ class Automacao:
         try:
             alvo = colunas[col_acoes] if col_acoes >= 0 and col_acoes < len(colunas) else linha
 
-            # Diagnóstico: lista elementos na célula de ações
-            for el in alvo.find_elements(By.XPATH, ".//*"):
-                self.log(f"  Ação: <{el.tag_name}> text='{el.text.strip()}' title='{el.get_attribute('title')}' class='{el.get_attribute('class')}' href='{el.get_attribute('href')}'")
-
             icone = None
             for sel in [
+                ".//a[.//img[contains(@title,'Laudo') or contains(@title,'laudo')]]",
+                ".//a[contains(@title,'Laudo') or contains(@title,'laudo')]",
                 ".//a[normalize-space(text())='L']",
                 ".//button[normalize-space(text())='L']",
-                ".//a[contains(@title,'Laudo') or contains(@title,'laudo')]",
-                ".//img[contains(@title,'Laudo') or contains(@alt,'L')]",
+                ".//img[contains(@title,'Laudo') or contains(@title,'laudo')]",
                 ".//span[normalize-space(text())='L']",
             ]:
                 try:
@@ -222,7 +234,9 @@ class Automacao:
                 return
 
             janelas_antes = set(self.driver.window_handles)
-            icone.click()
+            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", icone)
+            time.sleep(0.3)
+            self.driver.execute_script("arguments[0].click();", icone)
             time.sleep(1)
 
             self._confirmar_popup()
