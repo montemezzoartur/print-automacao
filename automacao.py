@@ -192,6 +192,10 @@ class Automacao:
         try:
             alvo = colunas[col_acoes] if col_acoes >= 0 and col_acoes < len(colunas) else linha
 
+            # Diagnóstico: lista elementos na célula de ações
+            for el in alvo.find_elements(By.XPATH, ".//*"):
+                self.log(f"  Ação: <{el.tag_name}> text='{el.text.strip()}' title='{el.get_attribute('title')}' class='{el.get_attribute('class')}' href='{el.get_attribute('href')}'")
+
             icone = None
             for sel in [
                 ".//a[normalize-space(text())='L']",
