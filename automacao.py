@@ -145,6 +145,17 @@ class Automacao:
         self._processar_tabela()
 
     def _processar_tabela(self):
+        processados = 0
+        while processados < 3:
+            if not self._processar_proximo_exame():
+                break
+            processados += 1
+            time.sleep(1)
+
+        if processados == 0:
+            self.log("Nenhum exame com os critérios definidos encontrado.")
+
+    def _processar_proximo_exame(self):
         headers = self.driver.find_elements(By.XPATH, "//table//th")
         col_mod, col_convenio, col_acoes, col_realizante = -1, -1, -1, -1
 
@@ -161,9 +172,7 @@ class Automacao:
 
         if col_mod == -1 or col_convenio == -1:
             self.log("Colunas 'Mod.' ou 'Convênio' não identificadas na tabela.")
-            return
-
-        processados = 0
+            return False
 
         linhas = self.driver.find_elements(By.XPATH, "//table//tbody//tr")
 
@@ -187,16 +196,14 @@ class Automacao:
 
                     self.log(f"Exame encontrado — Mod: {mod} | Convênio: {convenio}")
                     self._clicar_icone_l(linha, colunas, col_acoes)
-                    processados += 1
-                    time.sleep(1)
+                    return True
 
             except StaleElementReferenceException:
                 break
             except Exception as e:
                 self.log(f"Erro ao analisar linha: {e}")
 
-        if processados == 0:
-            self.log("Nenhum exame com os critérios definidos encontrado.")
+        return False
 
     def _clicar_icone_l(self, linha, colunas, col_acoes):
         try:
