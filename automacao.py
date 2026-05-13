@@ -67,6 +67,8 @@ class Automacao:
             pass
 
         campo_usuario = self._encontrar_elemento(wait, [
+            (By.ID, "input-captchaems"),
+            (By.NAME, "captchaems"),
             (By.NAME, "username"),
             (By.NAME, "user"),
             (By.NAME, "login"),
@@ -83,6 +85,7 @@ class Automacao:
         campo_usuario.send_keys(config.USUARIO)
 
         campo_senha = self._encontrar_elemento(wait, [
+            (By.ID, "password1"),
             (By.XPATH, "//input[@type='password']"),
             (By.NAME, "password"),
             (By.NAME, "senha"),
