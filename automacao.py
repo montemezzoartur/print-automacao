@@ -4,6 +4,7 @@ from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.options import Options
+from selenium.webdriver.edge.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
@@ -49,9 +50,15 @@ class Automacao:
         self.log("Automação encerrada.")
 
     def _abrir_navegador(self):
+        import os
         options = Options()
         options.use_chromium = True
-        self.driver = webdriver.Edge(options=options)
+        driver_local = os.path.join(os.path.dirname(__file__), "msedgedriver.exe")
+        if os.path.exists(driver_local):
+            service = Service(driver_local)
+        else:
+            service = Service()
+        self.driver = webdriver.Edge(service=service, options=options)
         self.driver.maximize_window()
         self.driver.get(config.URL)
         self.log("Navegador aberto.")

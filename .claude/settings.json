@@ -6,7 +6,7 @@
           {
             "type": "command",
             "shell": "powershell",
-            "command": "Set-Location 'C:\\Users\\artur\\OneDrive\\Controle\\Projetos\\Print'; $env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH','User'); git add .; $diff = git diff --cached --quiet; if ($LASTEXITCODE -ne 0) { git commit -m 'auto: atualizacao via Claude Code'; git push }",
+            "command": "Set-Location 'C:\\Users\\artur\\Desktop\\Projetos\\Print'; $env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH','User'); git add .; $diff = git diff --cached --quiet; if ($LASTEXITCODE -ne 0) { git commit -m 'auto: atualizacao via Claude Code'; git push }",
             "statusMessage": "Sincronizando com GitHub...",
             "timeout": 30
           }
