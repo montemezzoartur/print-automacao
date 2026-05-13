@@ -73,7 +73,8 @@ class App:
         self.ativo = True
         self.label_status.config(text="● ATIVO", fg="#a6e3a1")
         self.botao.config(text="DESATIVAR", bg="#f38ba8", activebackground="#e07a96")
-        self.automacao = Automacao(log_callback=self._log)
+        if not self.automacao:
+            self.automacao = Automacao(log_callback=self._log)
         threading.Thread(target=self.automacao.iniciar, daemon=True).start()
 
     def _desativar(self):
@@ -82,7 +83,6 @@ class App:
         self.botao.config(text="ATIVAR", bg="#a6e3a1", activebackground="#94d49a")
         if self.automacao:
             threading.Thread(target=self.automacao.parar, daemon=True).start()
-            self.automacao = None
 
     def _log(self, mensagem):
         self.root.after(0, self._inserir_log, mensagem)

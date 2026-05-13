@@ -26,18 +26,20 @@ class Automacao:
     def iniciar(self):
         self.rodando = True
         try:
-            self._abrir_navegador()
-            self._aguardar_login_manual()
-            self.log("Login detectado. Monitorando a cada 30s...")
+            if not self.driver:
+                self._abrir_navegador()
+                self._aguardar_login_manual()
+                self.log("Login detectado. Monitorando a cada 30s...")
+            else:
+                self.log("Retomando sessão existente. Monitorando a cada 30s...")
             self._loop_principal()
         except Exception as e:
             self.log(f"Erro fatal: {e}")
-        finally:
             self._fechar_navegador()
 
     def parar(self):
         self.rodando = False
-        self._fechar_navegador()
+        self.log("Automação pausada. Navegador mantido aberto.")
 
     def _fechar_navegador(self):
         if self.driver:
