@@ -144,7 +144,7 @@ class Automacao:
 
     def _processar_tabela(self):
         headers = self.driver.find_elements(By.XPATH, "//table//th")
-        col_mod, col_convenio, col_acoes = -1, -1, -1
+        col_mod, col_convenio, col_acoes, col_realizante = -1, -1, -1, -1
 
         for i, h in enumerate(headers):
             t = h.text.strip().upper()
@@ -154,6 +154,8 @@ class Automacao:
                 col_convenio = i
             elif "AÇ" in t or t == "ACOES" or t == "AÇÕES":
                 col_acoes = i
+            elif "REALIZ" in t:
+                col_realizante = i
 
         if col_mod == -1 or col_convenio == -1:
             self.log("Colunas 'Mod.' ou 'Convênio' não identificadas na tabela.")
@@ -175,6 +177,11 @@ class Automacao:
                 conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
 
                 if mod_ok and conv_ok:
+                    if col_realizante >= 0 and col_realizante < len(colunas):
+                        realizante = colunas[col_realizante].text.strip()
+                        if realizante:
+                            continue
+
                     self.log(f"Exame encontrado — Mod: {mod} | Convênio: {convenio}")
                     self._clicar_icone_l(linha, colunas, col_acoes)
                     processados += 1
