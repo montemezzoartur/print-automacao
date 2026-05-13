@@ -4,7 +4,6 @@ from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
@@ -50,15 +49,8 @@ class Automacao:
         self.log("Automação encerrada.")
 
     def _abrir_navegador(self):
-        import os
-        from webdriver_manager.chrome import ChromeDriverManager
         options = Options()
-        driver_local = os.path.join(os.path.dirname(__file__), "chromedriver.exe")
-        if os.path.exists(driver_local):
-            service = Service(driver_local)
-        else:
-            service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=options)
+        self.driver = webdriver.Chrome(options=options)
         self.driver.maximize_window()
         self.driver.get(config.URL)
         self.log("Navegador aberto.")
