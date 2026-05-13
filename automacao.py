@@ -3,8 +3,8 @@ import threading
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.edge.options import Options
-from selenium.webdriver.edge.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
@@ -51,15 +51,14 @@ class Automacao:
 
     def _abrir_navegador(self):
         import os
-        from webdriver_manager.microsoft import EdgeChromiumDriverManager
+        from webdriver_manager.chrome import ChromeDriverManager
         options = Options()
-        options.use_chromium = True
-        driver_local = os.path.join(os.path.dirname(__file__), "msedgedriver.exe")
+        driver_local = os.path.join(os.path.dirname(__file__), "chromedriver.exe")
         if os.path.exists(driver_local):
             service = Service(driver_local)
         else:
-            service = Service(EdgeChromiumDriverManager().install())
-        self.driver = webdriver.Edge(service=service, options=options)
+            service = Service(ChromeDriverManager().install())
+        self.driver = webdriver.Chrome(service=service, options=options)
         self.driver.maximize_window()
         self.driver.get(config.URL)
         self.log("Navegador aberto.")
