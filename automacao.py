@@ -147,13 +147,17 @@ class Automacao:
     def _processar_tabela(self):
         processados = 0
         while processados < 3:
+            self.log(f"Varredura #{processados + 1} da tabela...")
             if not self._processar_proximo_exame():
+                self.log("Nenhum exame elegível restante na tabela.")
                 break
             processados += 1
-            time.sleep(1)
+            time.sleep(2)
 
         if processados == 0:
             self.log("Nenhum exame com os critérios definidos encontrado.")
+        else:
+            self.log(f"{processados} ação(ões) realizadas neste ciclo.")
 
     def _processar_proximo_exame(self):
         headers = self.driver.find_elements(By.XPATH, "//table//th")
@@ -175,8 +179,9 @@ class Automacao:
             return False
 
         linhas = self.driver.find_elements(By.XPATH, "//table//tbody//tr")
+        self.log(f"  Linhas na tabela: {len(linhas)}")
 
-        for linha in linhas:
+        for i, linha in enumerate(linhas):
             try:
                 colunas = linha.find_elements(By.TAG_NAME, "td")
                 if len(colunas) <= max(col_mod, col_convenio):
@@ -189,16 +194,19 @@ class Automacao:
                 conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
 
                 if mod_ok and conv_ok:
+                    realizante = ""
                     if col_realizante >= 0 and col_realizante < len(colunas):
                         realizante = colunas[col_realizante].text.strip()
-                        if realizante:
-                            continue
+                    if realizante:
+                        self.log(f"  Linha {i+1}: Mod={mod} Conv={convenio} — ignorada (realizante: {realizante})")
+                        continue
 
                     self.log(f"Exame encontrado — Mod: {mod} | Convênio: {convenio}")
                     self._clicar_icone_l(linha, colunas, col_acoes)
                     return True
 
             except StaleElementReferenceException:
+                self.log(f"  StaleElement na linha {i+1} — abortando varredura.")
                 break
             except Exception as e:
                 self.log(f"Erro ao analisar linha: {e}")
