@@ -29,9 +29,9 @@ class Automacao:
             if not self.driver:
                 self._abrir_navegador()
                 self._aguardar_login_manual()
-                self.log("Login detectado. Monitorando a cada 30s...")
+                self.log("Login detectado. Monitorando a cada 15s...")
             else:
-                self.log("Retomando sessão existente. Monitorando a cada 30s...")
+                self.log("Retomando sessão existente. Monitorando a cada 15s...")
             self._loop_principal()
         except Exception as e:
             self.log(f"Erro fatal: {e}")
