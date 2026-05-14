@@ -178,39 +178,46 @@ class Automacao:
             self.log("Colunas 'Mod.' ou 'Convênio' não identificadas na tabela.")
             return False
 
-        linhas = self.driver.find_elements(By.XPATH, "//table//tbody//tr")
-        self.log(f"  Linhas na tabela: {len(linhas)}")
-
-        for i, linha in enumerate(linhas):
+        max_tentativas = 3
+        for tentativa in range(max_tentativas):
             try:
-                colunas = linha.find_elements(By.TAG_NAME, "td")
-                if len(colunas) <= max(col_mod, col_convenio):
-                    continue
+                linhas = self.driver.find_elements(By.XPATH, "//table//tbody//tr")
+                if tentativa == 0:
+                    self.log(f"  Linhas na tabela: {len(linhas)}")
 
-                mod = colunas[col_mod].text.strip().upper()
-                convenio = colunas[col_convenio].text.strip().upper()
-
-                mod_ok = any(m in mod for m in config.MODS_ALVO)
-                conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
-
-                if mod_ok and conv_ok:
-                    realizante = ""
-                    if col_realizante >= 0 and col_realizante < len(colunas):
-                        realizante = colunas[col_realizante].text.strip()
-                    if realizante:
-                        self.log(f"  Linha {i+1}: Mod={mod} Conv={convenio} — ignorada (realizante: {realizante})")
+                for i, linha in enumerate(linhas):
+                    colunas = linha.find_elements(By.TAG_NAME, "td")
+                    if len(colunas) <= max(col_mod, col_convenio):
                         continue
 
-                    self.log(f"Exame encontrado — Mod: {mod} | Convênio: {convenio}")
-                    self._clicar_icone_l(linha, colunas, col_acoes)
-                    return True
+                    mod = colunas[col_mod].text.strip().upper()
+                    convenio = colunas[col_convenio].text.strip().upper()
+
+                    mod_ok = any(m in mod for m in config.MODS_ALVO)
+                    conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
+
+                    if mod_ok and conv_ok:
+                        realizante = ""
+                        if col_realizante >= 0 and col_realizante < len(colunas):
+                            realizante = colunas[col_realizante].text.strip()
+                        if realizante:
+                            self.log(f"  Linha {i+1}: Mod={mod} Conv={convenio} — ignorada (realizante: {realizante})")
+                            continue
+
+                        self.log(f"Exame encontrado — Mod: {mod} | Convênio: {convenio}")
+                        self._clicar_icone_l(linha, colunas, col_acoes)
+                        return True
+
+                return False
 
             except StaleElementReferenceException:
-                self.log(f"  StaleElement na linha {i+1} — abortando varredura.")
-                break
+                self.log(f"  Tabela mudou durante a varredura — refazendo (tentativa {tentativa+1}/{max_tentativas}).")
+                time.sleep(1)
             except Exception as e:
                 self.log(f"Erro ao analisar linha: {e}")
+                return False
 
+        self.log("  Tabela continua mudando — abortando varredura.")
         return False
 
     def _clicar_icone_l(self, linha, colunas, col_acoes):
