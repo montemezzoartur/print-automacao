@@ -208,6 +208,10 @@ class Automacao:
                     mod_ok = any(m in mod for m in config.MODS_ALVO)
                     conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
 
+                    # Convênio SAS só é alvo quando Mod for DX (excluído para CT)
+                    if conv_ok and "SAS" in convenio and "CT" in mod:
+                        conv_ok = False
+
                     if mod_ok and conv_ok:
                         linhas_com_match += 1
                         realizante = ""
