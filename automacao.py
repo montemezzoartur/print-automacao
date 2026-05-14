@@ -170,7 +170,7 @@ class Automacao:
 
     def _processar_proximo_exame(self):
         headers = self.driver.find_elements(By.XPATH, "//table//th")
-        col_mod, col_convenio, col_acoes, col_realizante = -1, -1, -1, -1
+        col_mod, col_convenio, col_acoes, col_realizante, col_descricao = -1, -1, -1, -1, -1
 
         for i, h in enumerate(headers):
             t = h.text.strip().upper()
@@ -182,12 +182,14 @@ class Automacao:
                 col_acoes = i
             elif "REALIZ" in t:
                 col_realizante = i
+            elif "DESCR" in t:
+                col_descricao = i
 
         if col_mod == -1 or col_convenio == -1:
             self.log("Colunas 'Mod.' ou 'Convênio' não identificadas na tabela.")
             return False
 
-        self.log(f"  Colunas: Mod={col_mod} Conv={col_convenio} Ações={col_acoes} Realiz={col_realizante}")
+        self.log(f"  Colunas: Mod={col_mod} Conv={col_convenio} Descr={col_descricao} Ações={col_acoes} Realiz={col_realizante}")
 
         max_tentativas = 3
         for tentativa in range(max_tentativas):
@@ -196,32 +198,47 @@ class Automacao:
                 if tentativa == 0:
                     self.log(f"  Linhas na tabela: {len(linhas)}")
 
+                indice_max_coluna = max(col_mod, col_convenio)
+                if col_descricao >= 0:
+                    indice_max_coluna = max(indice_max_coluna, col_descricao)
+
                 linhas_com_match = 0
                 for i, linha in enumerate(linhas):
                     colunas = linha.find_elements(By.TAG_NAME, "td")
-                    if len(colunas) <= max(col_mod, col_convenio):
+                    if len(colunas) <= indice_max_coluna:
                         continue
 
                     mod = colunas[col_mod].text.strip().upper()
                     convenio = colunas[col_convenio].text.strip().upper()
+                    descricao = ""
+                    if col_descricao >= 0 and col_descricao < len(colunas):
+                        descricao = colunas[col_descricao].text.strip().upper()
 
                     mod_ok = any(m in mod for m in config.MODS_ALVO)
-                    conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
+                    angio_ok = "ANGIO" in descricao
 
-                    # Convênio SAS só é alvo quando Mod for DX (excluído para CT)
-                    if conv_ok and "SAS" in convenio and "CT" in mod:
-                        conv_ok = False
+                    if angio_ok:
+                        # Descrição com ANGIO dispensa checagem de convênio
+                        elegivel = mod_ok
+                        motivo = f"ANGIO em descrição ({descricao})"
+                    else:
+                        conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
+                        # Convênio SAS só é alvo quando Mod for DX (excluído para CT)
+                        if conv_ok and "SAS" in convenio and "CT" in mod:
+                            conv_ok = False
+                        elegivel = mod_ok and conv_ok
+                        motivo = f"Convênio: {convenio}"
 
-                    if mod_ok and conv_ok:
+                    if elegivel:
                         linhas_com_match += 1
                         realizante = ""
                         if col_realizante >= 0 and col_realizante < len(colunas):
                             realizante = colunas[col_realizante].text.strip()
                         if realizante:
-                            self.log(f"  Linha {i+1}: Mod={mod} Conv={convenio} — ignorada (realizante: {realizante})")
+                            self.log(f"  Linha {i+1}: Mod={mod} {motivo} — ignorada (realizante: {realizante})")
                             continue
 
-                        self.log(f"Exame encontrado — Mod: {mod} | Convênio: {convenio}")
+                        self.log(f"Exame encontrado — Mod: {mod} | {motivo}")
                         self._clicar_icone_l(linha, colunas, col_acoes)
                         return True
 
@@ -237,7 +254,10 @@ class Automacao:
                                 continue
                             mod_raw = colunas[col_mod].text.strip()
                             conv_raw = colunas[col_convenio].text.strip()
-                            self.log(f"    Linha {i+1}: Mod='{mod_raw}' Conv='{conv_raw}'")
+                            descr_raw = ""
+                            if col_descricao >= 0 and col_descricao < len(colunas):
+                                descr_raw = colunas[col_descricao].text.strip()
+                            self.log(f"    Linha {i+1}: Mod='{mod_raw}' Conv='{conv_raw}' Descr='{descr_raw}'")
                             amostras += 1
                         except Exception:
                             continue
