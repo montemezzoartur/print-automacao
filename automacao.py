@@ -29,9 +29,9 @@ class Automacao:
             if not self.driver:
                 self._abrir_navegador()
                 self._aguardar_login_manual()
-                self.log("Login detectado. Monitorando a cada 15s...")
+                self.log("Login detectado. Monitorando a cada 30s...")
             else:
-                self.log("Retomando sessão existente. Monitorando a cada 15s...")
+                self.log("Retomando sessão existente. Monitorando a cada 30s...")
             self._loop_principal()
         except Exception as e:
             self.log(f"Erro fatal: {e}")
@@ -149,15 +149,16 @@ class Automacao:
         self._processar_tabela()
 
     def _processar_tabela(self):
+        max_acoes = 5
         processados = 0
-        while processados < 3:
+        while processados < max_acoes:
             self.log(f"Varredura #{processados + 1} da tabela...")
             if not self._processar_proximo_exame():
                 self.log("Nenhum exame elegível restante na tabela.")
                 break
             processados += 1
             time.sleep(2)
-            if processados < 3:
+            if processados < max_acoes:
                 self.log("Atualizando tabela antes da próxima varredura...")
                 if not self._clicar_buscar_exames():
                     break
