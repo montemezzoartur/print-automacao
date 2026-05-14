@@ -218,9 +218,9 @@ class Automacao:
                     angio_ok = "ANGIO" in descricao
 
                     if angio_ok:
-                        # Descrição com ANGIO dispensa checagem de convênio
-                        elegivel = mod_ok
-                        motivo = f"ANGIO em descrição ({descricao})"
+                        # Descrição com ANGIO: aceita qualquer convênio exceto UNIMED
+                        elegivel = mod_ok and "UNIMED" not in convenio
+                        motivo = f"ANGIO em descrição (Conv: {convenio or 'vazio'})"
                     else:
                         conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
                         # Convênio SAS só é alvo quando Mod for DX (excluído para CT)
