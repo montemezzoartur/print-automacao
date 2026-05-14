@@ -126,9 +126,8 @@ class Automacao:
                     return
                 time.sleep(1)
 
-    def _buscar_e_processar(self):
+    def _clicar_buscar_exames(self):
         wait = WebDriverWait(self.driver, 10)
-
         botao = self._encontrar_elemento(wait, [
             (By.XPATH, "//button[contains(translate(.,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
             (By.XPATH, "//a[contains(translate(.,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
@@ -137,11 +136,16 @@ class Automacao:
 
         if not botao:
             self.log("Botão 'Buscar Exames' não encontrado.")
-            return
+            return False
 
         botao.click()
-        self.log("Buscando exames...")
         time.sleep(2)
+        return True
+
+    def _buscar_e_processar(self):
+        if not self._clicar_buscar_exames():
+            return
+        self.log("Buscando exames...")
         self._processar_tabela()
 
     def _processar_tabela(self):
@@ -153,6 +157,10 @@ class Automacao:
                 break
             processados += 1
             time.sleep(2)
+            if processados < 3:
+                self.log("Atualizando tabela antes da próxima varredura...")
+                if not self._clicar_buscar_exames():
+                    break
 
         if processados == 0:
             self.log("Nenhum exame com os critérios definidos encontrado.")
@@ -178,6 +186,8 @@ class Automacao:
             self.log("Colunas 'Mod.' ou 'Convênio' não identificadas na tabela.")
             return False
 
+        self.log(f"  Colunas: Mod={col_mod} Conv={col_convenio} Ações={col_acoes} Realiz={col_realizante}")
+
         max_tentativas = 3
         for tentativa in range(max_tentativas):
             try:
@@ -185,6 +195,7 @@ class Automacao:
                 if tentativa == 0:
                     self.log(f"  Linhas na tabela: {len(linhas)}")
 
+                linhas_com_match = 0
                 for i, linha in enumerate(linhas):
                     colunas = linha.find_elements(By.TAG_NAME, "td")
                     if len(colunas) <= max(col_mod, col_convenio):
@@ -197,6 +208,7 @@ class Automacao:
                     conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
 
                     if mod_ok and conv_ok:
+                        linhas_com_match += 1
                         realizante = ""
                         if col_realizante >= 0 and col_realizante < len(colunas):
                             realizante = colunas[col_realizante].text.strip()
@@ -207,6 +219,23 @@ class Automacao:
                         self.log(f"Exame encontrado — Mod: {mod} | Convênio: {convenio}")
                         self._clicar_icone_l(linha, colunas, col_acoes)
                         return True
+
+                if linhas_com_match == 0:
+                    self.log(f"  Nenhuma linha bateu critérios. Amostra das 5 primeiras com células:")
+                    amostras = 0
+                    for i, linha in enumerate(linhas):
+                        if amostras >= 5:
+                            break
+                        try:
+                            colunas = linha.find_elements(By.TAG_NAME, "td")
+                            if len(colunas) <= max(col_mod, col_convenio):
+                                continue
+                            mod_raw = colunas[col_mod].text.strip()
+                            conv_raw = colunas[col_convenio].text.strip()
+                            self.log(f"    Linha {i+1}: Mod='{mod_raw}' Conv='{conv_raw}'")
+                            amostras += 1
+                        except Exception:
+                            continue
 
                 return False
 
