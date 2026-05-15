@@ -1,5 +1,4 @@
 import time
-import threading
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -18,6 +17,8 @@ class Automacao:
         self.driver = None
         self.rodando = False
         self._log_fn = log_callback or print
+        self.ids_passo2 = set()
+        self.ids_passo3 = set()
 
     def log(self, msg):
         hora = datetime.now().strftime("%H:%M:%S")
@@ -29,9 +30,9 @@ class Automacao:
             if not self.driver:
                 self._abrir_navegador()
                 self._aguardar_login_manual()
-                self.log("Login detectado. Monitorando a cada 30s...")
+                self.log("Login detectado. Iniciando ciclos varredura/checagem...")
             else:
-                self.log("Retomando sessão existente. Monitorando a cada 30s...")
+                self.log("Retomando sessão existente.")
             self._loop_principal()
         except Exception as e:
             self.log(f"Erro fatal: {e}")
@@ -65,66 +66,398 @@ class Automacao:
         except TimeoutException:
             raise Exception("Tempo de espera para login manual esgotado (5 min).")
 
-    def _fazer_login(self):
-        wait = WebDriverWait(self.driver, 15)
-
-        campo_usuario = self._encontrar_elemento(wait, [
-            (By.ID, "input-captchaems"),
-            (By.NAME, "captchaems"),
-            (By.NAME, "username"),
-            (By.NAME, "user"),
-            (By.NAME, "login"),
-            (By.ID, "username"),
-            (By.ID, "user"),
-            (By.ID, "login"),
-            (By.XPATH, "//input[@type='text']"),
-            (By.XPATH, "//input[not(@type) or @type='email']"),
-        ])
-        if not campo_usuario:
-            raise Exception("Campo de usuário não encontrado na página de login.")
-        campo_usuario.clear()
-        campo_usuario.send_keys(config.USUARIO)
-
-        campo_senha = self._encontrar_elemento(wait, [
-            (By.ID, "password1"),
-            (By.XPATH, "//input[@type='password']"),
-            (By.NAME, "password"),
-            (By.NAME, "senha"),
-            (By.ID, "password"),
-            (By.ID, "senha"),
-        ])
-        if not campo_senha:
-            raise Exception("Campo de senha não encontrado na página de login.")
-        campo_senha.clear()
-        campo_senha.send_keys(config.SENHA)
-
-        botao_login = self._encontrar_elemento(wait, [
-            (By.XPATH, "//button[@type='submit']"),
-            (By.XPATH, "//input[@type='submit']"),
-            (By.XPATH, "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'ENTRAR')]"),
-            (By.XPATH, "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'LOGIN')]"),
-            (By.XPATH, "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'ACESSAR')]"),
-        ], clicavel=True)
-
-        if botao_login:
-            botao_login.click()
-        else:
-            from selenium.webdriver.common.keys import Keys
-            campo_senha.send_keys(Keys.RETURN)
-
-        time.sleep(3)
-        self.log("Login enviado.")
-
     def _loop_principal(self):
         while self.rodando:
             try:
-                self._buscar_e_processar()
+                self._etapa_varredura()
             except Exception as e:
-                self.log(f"Erro no ciclo: {e}")
-            for _ in range(config.INTERVALO_SEGUNDOS):
-                if not self.rodando:
-                    return
-                time.sleep(1)
+                self.log(f"Erro na etapa de varredura: {e}")
+            if not self.rodando:
+                return
+            try:
+                self._etapa_checagem()
+            except Exception as e:
+                self.log(f"Erro na etapa de checagem: {e}")
+
+    # ---------- ETAPAS ----------
+
+    def _etapa_varredura(self):
+        duracao = config.VARREDURA_DURACAO_SEG
+        n_verif = config.VARREDURA_VERIFICACOES
+        slot = duracao / n_verif
+
+        self.log(f"=== ETAPA DE VARREDURA ({duracao}s, {n_verif} verificações) ===")
+        inicio = time.time()
+        fim = inicio + duracao
+
+        for i in range(n_verif):
+            if not self.rodando or time.time() >= fim:
+                break
+            self.log(f"-- Verificação {i+1}/{n_verif} --")
+            slot_fim = inicio + (i + 1) * slot
+
+            self._executar_passo1_ate_esgotar(fim)
+            if not self.rodando or time.time() >= fim:
+                break
+            self._executar_passo2_ate_esgotar(fim)
+
+            self._aguardar_ate(min(slot_fim, fim))
+
+    def _etapa_checagem(self):
+        duracao = config.CHECAGEM_DURACAO_SEG
+        max_acoes = config.CHECAGEM_MAX_ACOES
+
+        if not self.ids_passo2:
+            self.log(f"=== ETAPA DE CHECAGEM — nenhum ID em espera, aguardando {duracao}s ===")
+            self._aguardar_ate(time.time() + duracao)
+            return
+
+        self.log(f"=== ETAPA DE CHECAGEM ({duracao}s, máx {max_acoes} ações, {len(self.ids_passo2)} IDs em espera) ===")
+        inicio = time.time()
+        fim = inicio + duracao
+        acoes = 0
+
+        while self.rodando and acoes < max_acoes and time.time() < fim:
+            if not self._clicar_buscar_exames():
+                break
+            agiu, removidos = self._checar_ids_aguardando()
+            if removidos:
+                self.log(f"  IDs encerrados sem ação (Conv. bateu parâmetros): {removidos}")
+            if agiu:
+                acoes += 1
+                self.log(f"  Ações na checagem: {acoes}/{max_acoes}")
+            else:
+                break
+
+        tempo_restante = fim - time.time()
+        if tempo_restante > 0:
+            self._aguardar_ate(fim)
+
+    # ---------- PASSO 1 ----------
+
+    def _executar_passo1_ate_esgotar(self, deadline):
+        while self.rodando and time.time() < deadline:
+            if not self._clicar_buscar_exames():
+                return
+            if not self._executar_passo1_uma_acao():
+                return
+            time.sleep(1)
+
+    def _executar_passo1_uma_acao(self):
+        cols = self._detectar_colunas()
+        if cols is None:
+            return False
+
+        linhas = self._linhas_seguras()
+        if linhas is None:
+            return False
+
+        for i, linha in enumerate(linhas):
+            try:
+                colunas = linha.find_elements(By.TAG_NAME, "td")
+                if not self._cols_validas(colunas, cols):
+                    continue
+
+                mod = self._txt(colunas, cols["mod"])
+                convenio = self._txt(colunas, cols["convenio"])
+                descricao = self._txt(colunas, cols["descricao"])
+                realizante = self._txt(colunas, cols["realizante"], upper=False)
+                id_exame = self._txt(colunas, cols["id"], upper=False)
+
+                mod_ok = any(m in mod for m in config.MODS_ALVO)
+                if not mod_ok:
+                    continue
+
+                if "ANGIO" in descricao:
+                    elegivel = "UNIMED" not in convenio
+                    motivo = f"ANGIO (Conv: {convenio or 'vazio'})"
+                else:
+                    conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
+                    if conv_ok and "SAS" in convenio and "CT" in mod:
+                        conv_ok = False
+                    elegivel = conv_ok
+                    motivo = f"Conv: {convenio}"
+
+                if not elegivel:
+                    continue
+
+                if realizante.strip():
+                    continue
+
+                self.log(f"[Passo 1] ID {id_exame} — Mod {mod} | {motivo}")
+                self._clicar_icone_l(linha, colunas, cols["acoes"])
+                return True
+
+            except StaleElementReferenceException:
+                self.log("  Tabela mudou durante Passo 1 — reiniciando.")
+                return self._executar_passo1_uma_acao()
+            except Exception as e:
+                self.log(f"  Erro Passo 1 linha {i+1}: {e}")
+                continue
+
+        return False
+
+    # ---------- PASSO 2 ----------
+
+    def _executar_passo2_ate_esgotar(self, deadline):
+        while self.rodando and time.time() < deadline:
+            if not self._clicar_buscar_exames():
+                return
+            if not self._executar_passo2_uma_acao():
+                return
+            time.sleep(1)
+
+    def _executar_passo2_uma_acao(self):
+        cols = self._detectar_colunas()
+        if cols is None:
+            return False
+
+        linhas = self._linhas_seguras()
+        if linhas is None:
+            return False
+
+        for i, linha in enumerate(linhas):
+            try:
+                colunas = linha.find_elements(By.TAG_NAME, "td")
+                if not self._cols_validas(colunas, cols):
+                    continue
+
+                mod = self._txt(colunas, cols["mod"])
+                convenio = self._txt(colunas, cols["convenio"])
+                realizante = self._txt(colunas, cols["realizante"], upper=False)
+                id_exame = self._txt(colunas, cols["id"], upper=False)
+
+                if "DX" not in mod:
+                    continue
+                if convenio.strip():
+                    continue
+                if realizante.strip():
+                    continue
+                if id_exame and id_exame in self.ids_passo3:
+                    continue
+
+                self.log(f"[Passo 2] ID {id_exame} — Mod {mod} (Conv. e Realizante vazios)")
+                self._clicar_icone_l(linha, colunas, cols["acoes"])
+                if id_exame:
+                    self.ids_passo2.add(id_exame)
+                return True
+
+            except StaleElementReferenceException:
+                self.log("  Tabela mudou durante Passo 2 — reiniciando.")
+                return self._executar_passo2_uma_acao()
+            except Exception as e:
+                self.log(f"  Erro Passo 2 linha {i+1}: {e}")
+                continue
+
+        return False
+
+    # ---------- PASSO 3 (CHECAGEM) ----------
+
+    def _checar_ids_aguardando(self):
+        """Percorre a tabela uma vez. Para cada ID em ids_passo2 encontrado:
+        - Convênio vazio: mantém em espera.
+        - Convênio bate Passo 1: remove da espera.
+        - Convênio NÃO bate: executa Passo 3, move para ids_passo3.
+        Retorna (agiu_bool, lista_de_ids_removidos_sem_acao)."""
+        cols = self._detectar_colunas()
+        if cols is None:
+            return False, []
+
+        linhas = self._linhas_seguras()
+        if linhas is None:
+            return False, []
+
+        removidos = []
+        for i, linha in enumerate(linhas):
+            try:
+                colunas = linha.find_elements(By.TAG_NAME, "td")
+                if not self._cols_validas(colunas, cols):
+                    continue
+
+                id_exame = self._txt(colunas, cols["id"], upper=False)
+                if not id_exame or id_exame not in self.ids_passo2:
+                    continue
+
+                mod = self._txt(colunas, cols["mod"])
+                convenio = self._txt(colunas, cols["convenio"])
+                descricao = self._txt(colunas, cols["descricao"])
+
+                if not convenio.strip():
+                    continue
+
+                if self._convenio_bate_dx(convenio, descricao):
+                    self.ids_passo2.discard(id_exame)
+                    removidos.append(id_exame)
+                    continue
+
+                self.log(f"[Passo 3] ID {id_exame} — Conv: {convenio} (não bate parâmetros). Removendo realizante.")
+                ok = self._executar_passo3(linha, colunas, cols)
+                if ok:
+                    self.ids_passo2.discard(id_exame)
+                    self.ids_passo3.add(id_exame)
+                    return True, removidos
+
+            except StaleElementReferenceException:
+                self.log("  Tabela mudou durante checagem — reiniciando.")
+                return self._checar_ids_aguardando()
+            except Exception as e:
+                self.log(f"  Erro checagem linha {i+1}: {e}")
+                continue
+
+        return False, removidos
+
+    def _convenio_bate_dx(self, convenio, descricao):
+        if "ANGIO" in descricao:
+            return "UNIMED" not in convenio
+        return any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
+
+    def _executar_passo3(self, linha, colunas, cols):
+        try:
+            col_realizante = cols["realizante"]
+            if col_realizante < 0 or col_realizante >= len(colunas):
+                self.log("  Coluna Realizante não encontrada.")
+                return False
+
+            celula = colunas[col_realizante]
+            alvo_clique = None
+            for sel in [
+                f".//a[contains(normalize-space(.),'{config.REALIZANTE_NOME}')]",
+                f".//span[contains(normalize-space(.),'{config.REALIZANTE_NOME}')]",
+                f".//*[contains(normalize-space(.),'{config.REALIZANTE_NOME}')]",
+            ]:
+                try:
+                    alvo_clique = celula.find_element(By.XPATH, sel)
+                    break
+                except NoSuchElementException:
+                    continue
+
+            if alvo_clique is None:
+                alvo_clique = celula
+
+            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", alvo_clique)
+            time.sleep(0.3)
+            self.driver.execute_script("arguments[0].click();", alvo_clique)
+
+            wait = WebDriverWait(self.driver, 8)
+            modal = None
+            for sel in [
+                "//div[contains(@class,'modal') and (contains(.,'Editar realizante') or contains(.,'realizante'))]",
+                "//div[contains(@class,'modal-content')]",
+                "//div[@role='dialog']",
+                "//div[contains(@class,'modal')]",
+            ]:
+                try:
+                    modal = wait.until(EC.visibility_of_element_located((By.XPATH, sel)))
+                    break
+                except TimeoutException:
+                    continue
+
+            if modal is None:
+                self.log("  Popup 'Editar realizante' não apareceu.")
+                return False
+
+            checkbox = None
+            for sel in [
+                ".//label[contains(normalize-space(.),'Realizante')]//input[@type='checkbox']",
+                ".//input[@type='checkbox' and following-sibling::*[contains(normalize-space(.),'Realizante')]]",
+                ".//input[@type='checkbox' and preceding-sibling::*[contains(normalize-space(.),'Realizante')]]",
+                ".//input[@type='checkbox']",
+            ]:
+                try:
+                    checkbox = modal.find_element(By.XPATH, sel)
+                    break
+                except NoSuchElementException:
+                    continue
+
+            if checkbox is None:
+                self.log("  Checkbox 'Realizante' não encontrado no popup.")
+                return False
+
+            if checkbox.is_selected():
+                try:
+                    checkbox.click()
+                except Exception:
+                    self.driver.execute_script("arguments[0].click();", checkbox)
+                time.sleep(0.3)
+
+            salvar = None
+            for sel in [
+                ".//button[normalize-space(.)='Salvar']",
+                ".//button[contains(normalize-space(.),'Salvar')]",
+                ".//input[@type='submit' and (@value='Salvar' or contains(@value,'Salvar'))]",
+                ".//a[normalize-space(.)='Salvar']",
+            ]:
+                try:
+                    salvar = modal.find_element(By.XPATH, sel)
+                    break
+                except NoSuchElementException:
+                    continue
+
+            if salvar is None:
+                self.log("  Botão 'Salvar' não encontrado no popup.")
+                return False
+
+            try:
+                salvar.click()
+            except Exception:
+                self.driver.execute_script("arguments[0].click();", salvar)
+            time.sleep(1)
+            self.log("  Realizante removido e salvo.")
+            return True
+
+        except Exception as e:
+            self.log(f"  Erro no Passo 3: {e}")
+            return False
+
+    # ---------- AUXILIARES ----------
+
+    def _detectar_colunas(self):
+        headers = self.driver.find_elements(By.XPATH, "//table//th")
+        cols = {"id": -1, "mod": -1, "convenio": -1, "acoes": -1, "realizante": -1, "descricao": -1}
+        for i, h in enumerate(headers):
+            t = h.text.strip().upper()
+            if t == "ID" or t.startswith("ID "):
+                cols["id"] = i
+            elif "MOD" in t:
+                cols["mod"] = i
+            elif "CONV" in t:
+                cols["convenio"] = i
+            elif "AÇ" in t or t == "ACOES" or t == "AÇÕES":
+                cols["acoes"] = i
+            elif "REALIZ" in t:
+                cols["realizante"] = i
+            elif "DESCR" in t:
+                cols["descricao"] = i
+
+        if cols["mod"] == -1 or cols["convenio"] == -1:
+            self.log("Colunas Mod./Convênio não identificadas.")
+            return None
+        if cols["id"] == -1:
+            self.log("Coluna ID não identificada — checagem fica limitada.")
+        return cols
+
+    def _linhas_seguras(self):
+        try:
+            return self.driver.find_elements(By.XPATH, "//table//tbody//tr")
+        except Exception as e:
+            self.log(f"Erro ao ler linhas: {e}")
+            return None
+
+    def _cols_validas(self, colunas, cols):
+        indices = [v for v in cols.values() if v >= 0]
+        if not indices:
+            return False
+        return len(colunas) > max(indices)
+
+    def _txt(self, colunas, idx, upper=True):
+        if idx < 0 or idx >= len(colunas):
+            return ""
+        t = colunas[idx].text.strip()
+        return t.upper() if upper else t
+
+    def _aguardar_ate(self, ts_alvo):
+        while self.rodando and time.time() < ts_alvo:
+            time.sleep(0.5)
 
     def _clicar_buscar_exames(self):
         wait = WebDriverWait(self.driver, 10)
@@ -138,141 +471,12 @@ class Automacao:
             self.log("Botão 'Buscar Exames' não encontrado.")
             return False
 
-        botao.click()
+        try:
+            botao.click()
+        except Exception:
+            self.driver.execute_script("arguments[0].click();", botao)
         time.sleep(2)
         return True
-
-    def _buscar_e_processar(self):
-        if not self._clicar_buscar_exames():
-            return
-        self.log("Buscando exames...")
-        self._processar_tabela()
-
-    def _processar_tabela(self):
-        max_acoes = 5
-        processados = 0
-        while processados < max_acoes:
-            self.log(f"Varredura #{processados + 1} da tabela...")
-            if not self._processar_proximo_exame():
-                self.log("Nenhum exame elegível restante na tabela.")
-                break
-            processados += 1
-            time.sleep(2)
-            if processados < max_acoes:
-                self.log("Atualizando tabela antes da próxima varredura...")
-                if not self._clicar_buscar_exames():
-                    break
-
-        if processados == 0:
-            self.log("Nenhum exame com os critérios definidos encontrado.")
-        else:
-            self.log(f"{processados} ação(ões) realizadas neste ciclo.")
-
-    def _processar_proximo_exame(self):
-        headers = self.driver.find_elements(By.XPATH, "//table//th")
-        col_mod, col_convenio, col_acoes, col_realizante, col_descricao = -1, -1, -1, -1, -1
-
-        for i, h in enumerate(headers):
-            t = h.text.strip().upper()
-            if "MOD" in t:
-                col_mod = i
-            elif "CONV" in t:
-                col_convenio = i
-            elif "AÇ" in t or t == "ACOES" or t == "AÇÕES":
-                col_acoes = i
-            elif "REALIZ" in t:
-                col_realizante = i
-            elif "DESCR" in t:
-                col_descricao = i
-
-        if col_mod == -1 or col_convenio == -1:
-            self.log("Colunas 'Mod.' ou 'Convênio' não identificadas na tabela.")
-            return False
-
-        self.log(f"  Colunas: Mod={col_mod} Conv={col_convenio} Descr={col_descricao} Ações={col_acoes} Realiz={col_realizante}")
-
-        max_tentativas = 3
-        for tentativa in range(max_tentativas):
-            try:
-                linhas = self.driver.find_elements(By.XPATH, "//table//tbody//tr")
-                if tentativa == 0:
-                    self.log(f"  Linhas na tabela: {len(linhas)}")
-
-                indice_max_coluna = max(col_mod, col_convenio)
-                if col_descricao >= 0:
-                    indice_max_coluna = max(indice_max_coluna, col_descricao)
-
-                linhas_com_match = 0
-                for i, linha in enumerate(linhas):
-                    colunas = linha.find_elements(By.TAG_NAME, "td")
-                    if len(colunas) <= indice_max_coluna:
-                        continue
-
-                    mod = colunas[col_mod].text.strip().upper()
-                    convenio = colunas[col_convenio].text.strip().upper()
-                    descricao = ""
-                    if col_descricao >= 0 and col_descricao < len(colunas):
-                        descricao = colunas[col_descricao].text.strip().upper()
-
-                    mod_ok = any(m in mod for m in config.MODS_ALVO)
-                    angio_ok = "ANGIO" in descricao
-
-                    if angio_ok:
-                        # Descrição com ANGIO: aceita qualquer convênio exceto UNIMED
-                        elegivel = mod_ok and "UNIMED" not in convenio
-                        motivo = f"ANGIO em descrição (Conv: {convenio or 'vazio'})"
-                    else:
-                        conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
-                        # Convênio SAS só é alvo quando Mod for DX (excluído para CT)
-                        if conv_ok and "SAS" in convenio and "CT" in mod:
-                            conv_ok = False
-                        elegivel = mod_ok and conv_ok
-                        motivo = f"Convênio: {convenio}"
-
-                    if elegivel:
-                        linhas_com_match += 1
-                        realizante = ""
-                        if col_realizante >= 0 and col_realizante < len(colunas):
-                            realizante = colunas[col_realizante].text.strip()
-                        if realizante:
-                            self.log(f"  Linha {i+1}: Mod={mod} {motivo} — ignorada (realizante: {realizante})")
-                            continue
-
-                        self.log(f"Exame encontrado — Mod: {mod} | {motivo}")
-                        self._clicar_icone_l(linha, colunas, col_acoes)
-                        return True
-
-                if linhas_com_match == 0:
-                    self.log(f"  Nenhuma linha bateu critérios. Amostra das 5 primeiras com células:")
-                    amostras = 0
-                    for i, linha in enumerate(linhas):
-                        if amostras >= 5:
-                            break
-                        try:
-                            colunas = linha.find_elements(By.TAG_NAME, "td")
-                            if len(colunas) <= max(col_mod, col_convenio):
-                                continue
-                            mod_raw = colunas[col_mod].text.strip()
-                            conv_raw = colunas[col_convenio].text.strip()
-                            descr_raw = ""
-                            if col_descricao >= 0 and col_descricao < len(colunas):
-                                descr_raw = colunas[col_descricao].text.strip()
-                            self.log(f"    Linha {i+1}: Mod='{mod_raw}' Conv='{conv_raw}' Descr='{descr_raw}'")
-                            amostras += 1
-                        except Exception:
-                            continue
-
-                return False
-
-            except StaleElementReferenceException:
-                self.log(f"  Tabela mudou durante a varredura — refazendo (tentativa {tentativa+1}/{max_tentativas}).")
-                time.sleep(1)
-            except Exception as e:
-                self.log(f"Erro ao analisar linha: {e}")
-                return False
-
-        self.log("  Tabela continua mudando — abortando varredura.")
-        return False
 
     def _clicar_icone_l(self, linha, colunas, col_acoes):
         try:
@@ -313,7 +517,7 @@ class Automacao:
                 self.log("Aba extra fechada.")
 
             self.driver.switch_to.window(list(janelas_antes)[0])
-            self.log("Ação concluída com sucesso.")
+            self.log("  Ação L concluída.")
 
         except Exception as e:
             self.log(f"Erro ao processar ícone L: {e}")
@@ -322,7 +526,7 @@ class Automacao:
         try:
             alert = self.driver.switch_to.alert
             alert.accept()
-            self.log("Alerta do navegador confirmado.")
+            self.log("  Alerta confirmado.")
             return
         except NoAlertPresentException:
             pass
@@ -337,12 +541,12 @@ class Automacao:
             try:
                 btn = wait.until(EC.element_to_be_clickable((by, sel)))
                 btn.click()
-                self.log("Popup confirmado com 'Sim'.")
+                self.log("  Popup confirmado com 'Sim'.")
                 return
             except TimeoutException:
                 continue
 
-        self.log("Popup não encontrado (pode já ter fechado automaticamente).")
+        self.log("  Popup não encontrado (pode ter fechado sozinho).")
 
     def _encontrar_elemento(self, wait, seletores, clicavel=False):
         for by, sel in seletores:
