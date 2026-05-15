@@ -112,7 +112,7 @@ class Automacao:
             self._aguardar_ate(time.time() + duracao)
             return
 
-        self.log(f"=== ETAPA DE CHECAGEM ({duracao}s, máx {max_acoes} ações, {len(self.ids_passo2)} IDs em espera) ===")
+        self.log(f"=== ETAPA DE CHECAGEM ({duracao}s, máx {max_acoes} ações, IDs em espera: {sorted(self.ids_passo2)}) ===")
         inicio = time.time()
         fim = inicio + duracao
         acoes = 0
@@ -127,7 +127,11 @@ class Automacao:
                 acoes += 1
                 self.log(f"  Ações na checagem: {acoes}/{max_acoes}")
             else:
-                break
+                tempo_restante = fim - time.time()
+                if tempo_restante <= 0 or not self.ids_passo2:
+                    break
+                self.log(f"  Nenhuma ação nesta passada. Aguardando 5s para reavaliar ({int(tempo_restante)}s restantes na checagem)...")
+                self._aguardar_ate(min(time.time() + 5, fim))
 
         tempo_restante = fim - time.time()
         if tempo_restante > 0:
@@ -236,10 +240,13 @@ class Automacao:
                 if id_exame and id_exame in self.ids_passo3:
                     continue
 
-                self.log(f"[Passo 2] ID {id_exame} — Mod {mod} (Conv. e Realizante vazios)")
+                self.log(f"[Passo 2] ID '{id_exame}' — Mod {mod} (Conv. e Realizante vazios)")
                 self._clicar_icone_l(linha, colunas, cols["acoes"])
                 if id_exame:
                     self.ids_passo2.add(id_exame)
+                    self.log(f"  ID '{id_exame}' gravado. ids_passo2 agora: {sorted(self.ids_passo2)}")
+                else:
+                    self.log("  ATENÇÃO: ID vazio — não foi possível gravar para checagem.")
                 return True
 
             except StaleElementReferenceException:
@@ -267,6 +274,8 @@ class Automacao:
         if linhas is None:
             return False, []
 
+        ids_alvo = set(self.ids_passo2)
+        ids_vistos = set()
         removidos = []
         for i, linha in enumerate(linhas):
             try:
@@ -275,27 +284,32 @@ class Automacao:
                     continue
 
                 id_exame = self._txt(colunas, cols["id"], upper=False)
-                if not id_exame or id_exame not in self.ids_passo2:
+                if not id_exame or id_exame not in ids_alvo:
                     continue
+                ids_vistos.add(id_exame)
 
                 mod = self._txt(colunas, cols["mod"])
                 convenio = self._txt(colunas, cols["convenio"])
                 descricao = self._txt(colunas, cols["descricao"])
 
                 if not convenio.strip():
+                    self.log(f"  ID '{id_exame}': Conv. ainda vazio → mantém em espera.")
                     continue
 
                 if self._convenio_bate_dx(convenio, descricao):
+                    self.log(f"  ID '{id_exame}': Conv='{convenio}' bate parâmetros DX → encerrado sem ação.")
                     self.ids_passo2.discard(id_exame)
                     removidos.append(id_exame)
                     continue
 
-                self.log(f"[Passo 3] ID {id_exame} — Conv: {convenio} (não bate parâmetros). Removendo realizante.")
+                self.log(f"[Passo 3] ID '{id_exame}' — Conv='{convenio}' NÃO bate parâmetros. Removendo realizante.")
                 ok = self._executar_passo3(linha, colunas, cols)
                 if ok:
                     self.ids_passo2.discard(id_exame)
                     self.ids_passo3.add(id_exame)
                     return True, removidos
+                else:
+                    self.log(f"  Passo 3 falhou para ID '{id_exame}' — manterá em espera.")
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante checagem — reiniciando.")
@@ -304,6 +318,9 @@ class Automacao:
                 self.log(f"  Erro checagem linha {i+1}: {e}")
                 continue
 
+        nao_encontrados = ids_alvo - ids_vistos
+        if nao_encontrados:
+            self.log(f"  IDs em espera não encontrados na tabela: {sorted(nao_encontrados)}")
         return False, removidos
 
     def _convenio_bate_dx(self, convenio, descricao):
