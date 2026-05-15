@@ -108,11 +108,10 @@ class Automacao:
         max_acoes = config.CHECAGEM_MAX_ACOES
 
         if not self.ids_passo2:
-            self.log(f"=== ETAPA DE CHECAGEM — nenhum ID em espera, aguardando {duracao}s ===")
-            self._aguardar_ate(time.time() + duracao)
+            self.log("=== ETAPA DE CHECAGEM — nenhum ID em espera, encerrando imediatamente ===")
             return
 
-        self.log(f"=== ETAPA DE CHECAGEM ({duracao}s, máx {max_acoes} ações, IDs em espera: {sorted(self.ids_passo2)}) ===")
+        self.log(f"=== ETAPA DE CHECAGEM (limite {duracao}s e {max_acoes} ações, IDs em espera: {sorted(self.ids_passo2)}) ===")
         inicio = time.time()
         fim = inicio + duracao
         acoes = 0
@@ -126,16 +125,12 @@ class Automacao:
             if agiu:
                 acoes += 1
                 self.log(f"  Ações na checagem: {acoes}/{max_acoes}")
-            else:
-                tempo_restante = fim - time.time()
-                if tempo_restante <= 0 or not self.ids_passo2:
-                    break
-                self.log(f"  Nenhuma ação nesta passada. Aguardando 5s para reavaliar ({int(tempo_restante)}s restantes na checagem)...")
-                self._aguardar_ate(min(time.time() + 5, fim))
-
-        tempo_restante = fim - time.time()
-        if tempo_restante > 0:
-            self._aguardar_ate(fim)
+            if not self.ids_passo2:
+                self.log("  Sem IDs em espera — encerrando checagem antecipadamente.")
+                break
+            if not agiu and not removidos:
+                self.log("  Nenhum exame cumpre critérios — encerrando checagem antecipadamente.")
+                break
 
     # ---------- PASSO 1 ----------
 
