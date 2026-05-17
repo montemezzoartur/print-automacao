@@ -19,20 +19,22 @@ class Automacao:
         self._log_fn = log_callback or print
         self.ids_passo2 = set()
         self.ids_passo3 = set()
+        self.modo = "AMBOS"
 
     def log(self, msg):
         hora = datetime.now().strftime("%H:%M:%S")
         self._log_fn(f"[{hora}] {msg}")
 
-    def iniciar(self):
+    def iniciar(self, modo="AMBOS"):
+        self.modo = modo if modo in ("AMBOS", "CT", "DX") else "AMBOS"
         self.rodando = True
         try:
             if not self.driver:
                 self._abrir_navegador()
                 self._aguardar_login_manual()
-                self.log("Login detectado. Iniciando ciclos varredura/checagem...")
+                self.log(f"Login detectado. Modo: {self.modo}.")
             else:
-                self.log("Retomando sessão existente.")
+                self.log(f"Retomando sessão existente. Modo: {self.modo}.")
             self._loop_principal()
         except Exception as e:
             self.log(f"Erro fatal: {e}")
@@ -67,6 +69,9 @@ class Automacao:
             raise Exception("Tempo de espera para login manual esgotado (5 min).")
 
     def _loop_principal(self):
+        if self.modo == "CT":
+            self._loop_ct_only()
+            return
         while self.rodando:
             try:
                 self._etapa_varredura()
@@ -78,6 +83,22 @@ class Automacao:
                 self._etapa_checagem()
             except Exception as e:
                 self.log(f"Erro na etapa de checagem: {e}")
+
+    def _loop_ct_only(self):
+        self.log("=== MODO CT — varredura contínua (10s ou após cada ação) ===")
+        while self.rodando:
+            try:
+                if not self._clicar_buscar_exames():
+                    self._aguardar_ate(time.time() + 10)
+                    continue
+                agiu = self._executar_passo1_uma_acao()
+                if not self.rodando:
+                    return
+                if not agiu:
+                    self._aguardar_ate(time.time() + 10)
+            except Exception as e:
+                self.log(f"Erro no loop CT: {e}")
+                self._aguardar_ate(time.time() + 10)
 
     # ---------- ETAPAS ----------
 
@@ -151,6 +172,13 @@ class Automacao:
         if linhas is None:
             return False
 
+        if self.modo == "CT":
+            mods_filtro = ["CT"]
+        elif self.modo == "DX":
+            mods_filtro = ["DX"]
+        else:
+            mods_filtro = config.MODS_ALVO
+
         for i, linha in enumerate(linhas):
             try:
                 colunas = linha.find_elements(By.TAG_NAME, "td")
@@ -163,7 +191,7 @@ class Automacao:
                 realizante = self._txt(colunas, cols["realizante"], upper=False)
                 id_exame = self._txt(colunas, cols["id"], upper=False)
 
-                mod_ok = any(m in mod for m in config.MODS_ALVO)
+                mod_ok = any(m in mod for m in mods_filtro)
                 if not mod_ok:
                     continue
 

@@ -4,16 +4,24 @@ import threading
 from automacao import Automacao
 
 
+MODOS = [
+    ("AMBOS", "CT e DX"),
+    ("CT", "CT"),
+    ("DX", "DX"),
+]
+
+
 class App:
     def __init__(self, root):
         self.root = root
         self.root.title("Print Automação")
-        self.root.geometry("360x270")
+        self.root.geometry("360x400")
         self.root.resizable(False, False)
         self.root.configure(bg="#1e1e2e")
 
-        self.ativo = False
+        self.modo_ativo = None
         self.automacao = None
+        self.botoes = {}
 
         self._construir_interface()
 
@@ -35,20 +43,23 @@ class App:
         )
         self.label_status.pack(pady=(0, 10))
 
-        self.botao = tk.Button(
-            self.root,
-            text="ATIVAR",
-            font=("Arial", 15, "bold"),
-            width=16,
-            height=2,
-            bg="#a6e3a1",
-            fg="#1e1e2e",
-            activebackground="#94d49a",
-            relief="flat",
-            cursor="hand2",
-            command=self.toggle,
-        )
-        self.botao.pack(pady=(0, 10))
+        for chave, rotulo in MODOS:
+            botao = tk.Button(
+                self.root,
+                text=f"ATIVAR {rotulo}",
+                font=("Arial", 12, "bold"),
+                width=20,
+                height=1,
+                bg="#a6e3a1",
+                fg="#1e1e2e",
+                activebackground="#94d49a",
+                disabledforeground="#6c7086",
+                relief="flat",
+                cursor="hand2",
+                command=lambda m=chave: self.toggle(m),
+            )
+            botao.pack(pady=4)
+            self.botoes[chave] = botao
 
         self.log_area = scrolledtext.ScrolledText(
             self.root,
@@ -61,26 +72,46 @@ class App:
             state="disabled",
             relief="flat",
         )
-        self.log_area.pack(padx=12, pady=(0, 12))
+        self.log_area.pack(padx=12, pady=(10, 12))
 
-    def toggle(self):
-        if self.ativo:
+    def toggle(self, modo):
+        if self.modo_ativo == modo:
             self._desativar()
-        else:
-            self._ativar()
+        elif self.modo_ativo is None:
+            self._ativar(modo)
 
-    def _ativar(self):
-        self.ativo = True
-        self.label_status.config(text="● ATIVO", fg="#a6e3a1")
-        self.botao.config(text="DESATIVAR", bg="#f38ba8", activebackground="#e07a96")
+    def _ativar(self, modo):
+        self.modo_ativo = modo
+        rotulo = dict(MODOS)[modo]
+        self.label_status.config(text=f"● ATIVO ({rotulo})", fg="#a6e3a1")
+        for chave, botao in self.botoes.items():
+            rotulo_chave = dict(MODOS)[chave]
+            if chave == modo:
+                botao.config(
+                    text=f"DESATIVAR {rotulo_chave}",
+                    bg="#f38ba8",
+                    activebackground="#e07a96",
+                    state="normal",
+                )
+            else:
+                botao.config(state="disabled")
         if not self.automacao:
             self.automacao = Automacao(log_callback=self._log)
-        threading.Thread(target=self.automacao.iniciar, daemon=True).start()
+        threading.Thread(
+            target=self.automacao.iniciar, args=(modo,), daemon=True
+        ).start()
 
     def _desativar(self):
-        self.ativo = False
+        self.modo_ativo = None
         self.label_status.config(text="● INATIVO", fg="#f38ba8")
-        self.botao.config(text="ATIVAR", bg="#a6e3a1", activebackground="#94d49a")
+        for chave, botao in self.botoes.items():
+            rotulo_chave = dict(MODOS)[chave]
+            botao.config(
+                text=f"ATIVAR {rotulo_chave}",
+                bg="#a6e3a1",
+                activebackground="#94d49a",
+                state="normal",
+            )
         if self.automacao:
             threading.Thread(target=self.automacao.parar, daemon=True).start()
 
