@@ -129,10 +129,10 @@ class Automacao:
         max_acoes = config.CHECAGEM_MAX_ACOES
 
         if not self.ids_passo2:
-            self.log("=== ETAPA DE CHECAGEM — nenhum ID em espera, encerrando imediatamente ===")
+            self.log("=== ETAPA DE CHECAGEM — nenhum exame em espera, encerrando imediatamente ===")
             return
 
-        self.log(f"=== ETAPA DE CHECAGEM (limite {duracao}s e {max_acoes} ações, IDs em espera: {sorted(self.ids_passo2)}) ===")
+        self.log(f"=== ETAPA DE CHECAGEM (limite {duracao}s e {max_acoes} ações, exames em espera: {sorted(self.ids_passo2)}) ===")
         inicio = time.time()
         fim = inicio + duracao
         acoes = 0
@@ -142,12 +142,12 @@ class Automacao:
                 break
             agiu, removidos = self._checar_ids_aguardando()
             if removidos:
-                self.log(f"  IDs encerrados sem ação (Conv. bateu parâmetros): {removidos}")
+                self.log(f"  Exames encerrados sem ação (Conv. bateu parâmetros): {removidos}")
             if agiu:
                 acoes += 1
                 self.log(f"  Ações na checagem: {acoes}/{max_acoes}")
             if not self.ids_passo2:
-                self.log("  Sem IDs em espera — encerrando checagem antecipadamente.")
+                self.log("  Sem exames em espera — encerrando checagem antecipadamente.")
                 break
             if not agiu and not removidos:
                 self.log("  Nenhum exame cumpre critérios — encerrando checagem antecipadamente.")
@@ -189,7 +189,8 @@ class Automacao:
                 convenio = self._txt(colunas, cols["convenio"])
                 descricao = self._txt(colunas, cols["descricao"])
                 realizante = self._txt(colunas, cols["realizante"], upper=False)
-                id_exame = self._txt(colunas, cols["id"], upper=False)
+                nome = self._txt(colunas, cols["nome"], upper=False)
+                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
 
                 mod_ok = any(m in mod for m in mods_filtro)
                 if not mod_ok:
@@ -211,7 +212,7 @@ class Automacao:
                 if realizante.strip():
                     continue
 
-                self.log(f"[Passo 1] ID {id_exame} — Mod {mod} | {motivo}")
+                self.log(f"[Passo 1] {nome} ({data_exame}) — Mod {mod} | {motivo}")
                 self._clicar_icone_l(linha, colunas, cols["acoes"])
                 return True
 
@@ -252,7 +253,9 @@ class Automacao:
                 mod = self._txt(colunas, cols["mod"])
                 convenio = self._txt(colunas, cols["convenio"])
                 realizante = self._txt(colunas, cols["realizante"], upper=False)
-                id_exame = self._txt(colunas, cols["id"], upper=False)
+                nome = self._txt(colunas, cols["nome"], upper=False)
+                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
+                chave = (nome, data_exame)
 
                 if "DX" not in mod:
                     continue
@@ -260,16 +263,16 @@ class Automacao:
                     continue
                 if realizante.strip():
                     continue
-                if id_exame and id_exame in self.ids_passo3:
+                if (nome or data_exame) and chave in self.ids_passo3:
                     continue
 
-                self.log(f"[Passo 2] ID '{id_exame}' — Mod {mod} (Conv. e Realizante vazios)")
+                self.log(f"[Passo 2] '{nome} ({data_exame})' — Mod {mod} (Conv. e Realizante vazios)")
                 self._clicar_icone_l(linha, colunas, cols["acoes"])
-                if id_exame:
-                    self.ids_passo2.add(id_exame)
-                    self.log(f"  ID '{id_exame}' gravado. ids_passo2 agora: {sorted(self.ids_passo2)}")
+                if nome or data_exame:
+                    self.ids_passo2.add(chave)
+                    self.log(f"  '{nome} ({data_exame})' gravado. ids_passo2 agora: {sorted(self.ids_passo2)}")
                 else:
-                    self.log("  ATENÇÃO: ID vazio — não foi possível gravar para checagem.")
+                    self.log("  ATENÇÃO: Nome/Data do exame vazios — não foi possível gravar para checagem.")
                 return True
 
             except StaleElementReferenceException:
@@ -306,33 +309,36 @@ class Automacao:
                 if not self._cols_validas(colunas, cols):
                     continue
 
-                id_exame = self._txt(colunas, cols["id"], upper=False)
-                if not id_exame or id_exame not in ids_alvo:
+                nome = self._txt(colunas, cols["nome"], upper=False)
+                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
+                chave = (nome, data_exame)
+                if not (nome or data_exame) or chave not in ids_alvo:
                     continue
-                ids_vistos.add(id_exame)
+                ids_vistos.add(chave)
+                rotulo = f"{nome} ({data_exame})"
 
                 mod = self._txt(colunas, cols["mod"])
                 convenio = self._txt(colunas, cols["convenio"])
                 descricao = self._txt(colunas, cols["descricao"])
 
                 if not convenio.strip():
-                    self.log(f"  ID '{id_exame}': Conv. ainda vazio → mantém em espera.")
+                    self.log(f"  '{rotulo}': Conv. ainda vazio → mantém em espera.")
                     continue
 
                 if self._convenio_bate_dx(convenio, descricao):
-                    self.log(f"  ID '{id_exame}': Conv='{convenio}' bate parâmetros DX → encerrado sem ação.")
-                    self.ids_passo2.discard(id_exame)
-                    removidos.append(id_exame)
+                    self.log(f"  '{rotulo}': Conv='{convenio}' bate parâmetros DX → encerrado sem ação.")
+                    self.ids_passo2.discard(chave)
+                    removidos.append(rotulo)
                     continue
 
-                self.log(f"[Passo 3] ID '{id_exame}' — Conv='{convenio}' NÃO bate parâmetros. Removendo realizante.")
+                self.log(f"[Passo 3] '{rotulo}' — Conv='{convenio}' NÃO bate parâmetros. Removendo realizante.")
                 ok = self._executar_passo3(linha, colunas, cols)
                 if ok:
-                    self.ids_passo2.discard(id_exame)
-                    self.ids_passo3.add(id_exame)
+                    self.ids_passo2.discard(chave)
+                    self.ids_passo3.add(chave)
                     return True, removidos
                 else:
-                    self.log(f"  Passo 3 falhou para ID '{id_exame}' — manterá em espera.")
+                    self.log(f"  Passo 3 falhou para '{rotulo}' — manterá em espera.")
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante checagem — reiniciando.")
@@ -343,7 +349,7 @@ class Automacao:
 
         nao_encontrados = ids_alvo - ids_vistos
         if nao_encontrados:
-            self.log(f"  IDs em espera não encontrados na tabela: {sorted(nao_encontrados)}")
+            self.log(f"  Exames em espera não encontrados na tabela: {sorted(nao_encontrados)}")
         return False, removidos
 
     def _convenio_bate_dx(self, convenio, descricao):
@@ -453,11 +459,13 @@ class Automacao:
 
     def _detectar_colunas(self):
         headers = self.driver.find_elements(By.XPATH, "//table//th")
-        cols = {"id": -1, "mod": -1, "convenio": -1, "acoes": -1, "realizante": -1, "descricao": -1}
+        cols = {"nome": -1, "data_exame": -1, "mod": -1, "convenio": -1, "acoes": -1, "realizante": -1, "descricao": -1}
         for i, h in enumerate(headers):
             t = h.text.strip().upper()
-            if t == "ID" or t.startswith("ID "):
-                cols["id"] = i
+            if "NOME" in t:
+                cols["nome"] = i
+            elif "DATA" in t and "EXAME" in t:
+                cols["data_exame"] = i
             elif "MOD" in t:
                 cols["mod"] = i
             elif "CONV" in t:
@@ -472,8 +480,8 @@ class Automacao:
         if cols["mod"] == -1 or cols["convenio"] == -1:
             self.log("Colunas Mod./Convênio não identificadas.")
             return None
-        if cols["id"] == -1:
-            self.log("Coluna ID não identificada — checagem fica limitada.")
+        if cols["nome"] == -1 or cols["data_exame"] == -1:
+            self.log("Colunas Nome do paciente / Data do exame não identificadas — checagem fica limitada.")
         return cols
 
     def _linhas_seguras(self):
