@@ -130,6 +130,9 @@ class Automacao:
         if cols.get("realizante", -1) < 0:
             self.log("  Coluna Realizante não localizada — reconciliação abortada.")
             return False
+        if cols.get("laudo", -1) < 0:
+            self.log("  Coluna Laudo não localizada — reconciliação abortada.")
+            return False
 
         linhas = self._linhas_seguras()
         if linhas is None:
@@ -162,6 +165,11 @@ class Automacao:
                 nome = self._txt(colunas, cols["nome"], upper=False)
                 data_exame = self._txt(colunas, cols["data_exame"], upper=False)
                 rotulo = f"{nome} ({data_exame})"
+
+                laudo = self._txt(colunas, cols["laudo"], upper=False)
+                if laudo.strip():
+                    self.log(f"[Reconciliação] '{rotulo}' — Laudo preenchido ('{laudo}'). Ignorado.")
+                    continue
 
                 self.log(f"[Reconciliação] '{rotulo}' — Conv='{convenio}' NÃO bate parâmetros DX. Removendo realizante órfão.")
                 ok = self._executar_passo3(linha, colunas, cols)
@@ -539,7 +547,7 @@ class Automacao:
 
     def _detectar_colunas(self):
         headers = self.driver.find_elements(By.XPATH, "//table//th")
-        cols = {"nome": -1, "data_exame": -1, "mod": -1, "convenio": -1, "acoes": -1, "realizante": -1, "descricao": -1}
+        cols = {"nome": -1, "data_exame": -1, "mod": -1, "convenio": -1, "acoes": -1, "realizante": -1, "descricao": -1, "laudo": -1}
         for i, h in enumerate(headers):
             t = h.text.strip().upper()
             if "NOME" in t:
@@ -556,6 +564,8 @@ class Automacao:
                 cols["realizante"] = i
             elif "DESCR" in t:
                 cols["descricao"] = i
+            elif "LAUDO" in t:
+                cols["laudo"] = i
 
         if cols["mod"] == -1 or cols["convenio"] == -1:
             self.log("Colunas Mod./Convênio não identificadas.")
