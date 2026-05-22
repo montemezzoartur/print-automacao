@@ -74,6 +74,12 @@ class Automacao:
             return
         while self.rodando:
             try:
+                self._etapa_reconciliacao()
+            except Exception as e:
+                self.log(f"Erro na etapa de reconciliação: {e}")
+            if not self.rodando:
+                return
+            try:
                 self._etapa_varredura()
             except Exception as e:
                 self.log(f"Erro na etapa de varredura: {e}")
@@ -101,6 +107,80 @@ class Automacao:
                 self._aguardar_ate(time.time() + 10)
 
     # ---------- ETAPAS ----------
+
+    def _etapa_reconciliacao(self):
+        max_acoes = 10
+        self.log("=== ETAPA DE RECONCILIAÇÃO (órfãos de sessões anteriores) ===")
+        if not self._clicar_buscar_exames():
+            return
+        acoes = 0
+        while self.rodando and acoes < max_acoes:
+            if not self._reconciliar_uma_acao():
+                break
+            acoes += 1
+        if acoes == 0:
+            self.log("  Nenhum exame órfão encontrado.")
+        else:
+            self.log(f"  Reconciliação concluída — {acoes} exame(s) regularizado(s).")
+
+    def _reconciliar_uma_acao(self):
+        cols = self._detectar_colunas()
+        if cols is None:
+            return False
+        if cols.get("realizante", -1) < 0:
+            self.log("  Coluna Realizante não localizada — reconciliação abortada.")
+            return False
+
+        linhas = self._linhas_seguras()
+        if linhas is None:
+            return False
+
+        alvo_realizante = config.REALIZANTE_NOME.upper()
+
+        for i, linha in enumerate(linhas):
+            try:
+                colunas = linha.find_elements(By.TAG_NAME, "td")
+                if not self._cols_validas(colunas, cols):
+                    continue
+
+                mod = self._txt(colunas, cols["mod"])
+                if "DX" not in mod:
+                    continue
+
+                realizante = self._txt(colunas, cols["realizante"])
+                if alvo_realizante not in realizante:
+                    continue
+
+                convenio = self._txt(colunas, cols["convenio"])
+                if not convenio.strip():
+                    continue
+
+                descricao = self._txt(colunas, cols["descricao"])
+                if self._convenio_bate_dx(convenio, descricao):
+                    continue
+
+                nome = self._txt(colunas, cols["nome"], upper=False)
+                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
+                rotulo = f"{nome} ({data_exame})"
+
+                self.log(f"[Reconciliação] '{rotulo}' — Conv='{convenio}' NÃO bate parâmetros DX. Removendo realizante órfão.")
+                ok = self._executar_passo3(linha, colunas, cols)
+                if ok:
+                    chave = (nome, data_exame)
+                    self.ids_passo2.discard(chave)
+                    self.ids_passo3.add(chave)
+                    return True
+                else:
+                    self.log(f"  Reconciliação falhou para '{rotulo}'.")
+
+            except StaleElementReferenceException:
+                self.log("  Tabela mudou durante reconciliação — reiniciando.")
+                return self._reconciliar_uma_acao()
+            except Exception as e:
+                self.log(f"  Erro reconciliação linha {i+1}: {e}")
+                continue
+
+        return False
 
     def _etapa_varredura(self):
         duracao = config.VARREDURA_DURACAO_SEG
