@@ -110,7 +110,10 @@ class Automacao:
 
     def _etapa_reconciliacao(self):
         max_acoes = 10
-        self.log("=== ETAPA DE RECONCILIAÇÃO (órfãos de sessões anteriores) ===")
+        self.log("=== ETAPA DE RECONCILIAÇÃO (apenas exames gravados pelo Passo 2) ===")
+        if not self.ids_passo2:
+            self.log("  Nenhum exame em ids_passo2 — reconciliação ignorada.")
+            return
         if not self._clicar_buscar_exames():
             return
         acoes = 0
@@ -164,7 +167,11 @@ class Automacao:
 
                 nome = self._txt(colunas, cols["nome"], upper=False)
                 data_exame = self._txt(colunas, cols["data_exame"], upper=False)
+                chave = (nome, data_exame)
                 rotulo = f"{nome} ({data_exame})"
+
+                if chave not in self.ids_passo2:
+                    continue
 
                 laudo = self._txt(colunas, cols["laudo"], upper=False)
                 if laudo.strip():
@@ -174,7 +181,6 @@ class Automacao:
                 self.log(f"[Reconciliação] '{rotulo}' — Conv='{convenio}' NÃO bate parâmetros DX. Removendo realizante órfão.")
                 ok = self._executar_passo3(linha, colunas, cols)
                 if ok:
-                    chave = (nome, data_exame)
                     self.ids_passo2.discard(chave)
                     self.ids_passo3.add(chave)
                     return True
