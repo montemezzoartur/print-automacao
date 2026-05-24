@@ -31,8 +31,8 @@ class Automacao:
         try:
             if not self.driver:
                 self._abrir_navegador()
-                self._aguardar_login_manual()
-                self.log(f"Login detectado. Modo: {self.modo}.")
+                self._fazer_login()
+                self.log(f"Login realizado. Modo: {self.modo}.")
             else:
                 self.log(f"Retomando sessão existente. Modo: {self.modo}.")
             self._loop_principal()
@@ -60,13 +60,50 @@ class Automacao:
         self.driver.get(config.URL)
         self.log("Navegador aberto.")
 
-    def _aguardar_login_manual(self):
-        self.log("Faça login manualmente no Chrome. Aguardando...")
-        wait = WebDriverWait(self.driver, 300)
+    def _fazer_login(self):
+        self.log("Realizando login automático...")
+        wait = WebDriverWait(self.driver, 20)
+
+        campo_usuario = self._encontrar_elemento(wait, [
+            (By.XPATH, "//input[@placeholder='Usuário' or @placeholder='Usuario']"),
+            (By.XPATH, "//input[@name='usuario' or @name='username' or @name='user']"),
+            (By.XPATH, "//input[@id='usuario' or @id='username' or @id='user']"),
+            (By.XPATH, "//input[@type='text']"),
+        ])
+        if not campo_usuario:
+            raise Exception("Campo de usuário não encontrado na tela de login.")
+
+        campo_senha = self._encontrar_elemento(wait, [
+            (By.XPATH, "//input[@type='password']"),
+            (By.XPATH, "//input[@placeholder='Senha']"),
+            (By.XPATH, "//input[@name='senha' or @name='password']"),
+        ])
+        if not campo_senha:
+            raise Exception("Campo de senha não encontrado na tela de login.")
+
+        campo_usuario.clear()
+        campo_usuario.send_keys(config.USUARIO)
+        campo_senha.clear()
+        campo_senha.send_keys(config.SENHA)
+
+        botao = self._encontrar_elemento(wait, [
+            (By.XPATH, "//button[contains(normalize-space(.),'Acessar sua conta')]"),
+            (By.XPATH, "//button[contains(normalize-space(.),'Acessar')]"),
+            (By.XPATH, "//button[@type='submit']"),
+            (By.XPATH, "//input[@type='submit']"),
+        ], clicavel=True)
+        if not botao:
+            raise Exception("Botão 'Acessar sua conta' não encontrado.")
+
         try:
-            wait.until(lambda d: "login" not in d.current_url.lower())
+            botao.click()
+        except Exception:
+            self.driver.execute_script("arguments[0].click();", botao)
+
+        try:
+            WebDriverWait(self.driver, 30).until(lambda d: "login" not in d.current_url.lower())
         except TimeoutException:
-            raise Exception("Tempo de espera para login manual esgotado (5 min).")
+            raise Exception("Login não foi concluído (URL ainda contém 'login' após 30s).")
 
     def _loop_principal(self):
         if self.modo == "CT":
