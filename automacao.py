@@ -328,6 +328,8 @@ class Automacao:
                     conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
                     if conv_ok and "SAS" in convenio and "CT" in mod:
                         conv_ok = False
+                    if conv_ok and "FLIP" in convenio and "CT" in mod:
+                        conv_ok = False
                     elegivel = conv_ok
                     motivo = f"Conv: {convenio}"
 
