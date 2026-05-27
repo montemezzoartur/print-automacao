@@ -324,7 +324,7 @@ class Automacao:
                 if "ANGIO" in descricao:
                     elegivel = "UNIMED" not in convenio
                     motivo = f"ANGIO (Conv: {convenio or 'vazio'})"
-                elif "CT" in mod and any(t in descricao for t in ("TEP", "CAROTIDAS", "CARÓTIDAS")):
+                elif "CT" in mod and any(t in descricao for t in ("TEP", "CAROTIDA", "CARÓTIDA")):
                     elegivel = "UNIMED" not in convenio
                     motivo = f"CT especial (Conv: {convenio or 'vazio'})"
                 else:
