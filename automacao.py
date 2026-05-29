@@ -333,6 +333,12 @@ class Automacao:
                         conv_ok = False
                     if conv_ok and "FLIP" in convenio and "CT" in mod:
                         conv_ok = False
+                    if conv_ok and "ARAMART" in convenio and "CT" in mod:
+                        conv_ok = False
+                    if conv_ok and "AVICOLA" in convenio and "CT" in mod:
+                        conv_ok = False
+                    if conv_ok and "HI-MIX" in convenio and "CT" in mod:
+                        conv_ok = False
                     elegivel = conv_ok
                     motivo = f"Conv: {convenio}"
 
