@@ -1,3 +1,4 @@
+import re
 import time
 from datetime import datetime
 from selenium import webdriver
@@ -321,7 +322,11 @@ class Automacao:
                 if not mod_ok:
                     continue
 
-                if "ANGIO" in descricao:
+                idade = self._extrair_idade(nome)
+                if "CT" in mod and ("CRANIO" in descricao or "CRÂNIO" in descricao) and idade is not None and idade <= 45:
+                    elegivel = True
+                    motivo = f"CT crânio, idade {idade} <= 45"
+                elif "ANGIO" in descricao:
                     elegivel = "UNIMED" not in convenio
                     motivo = f"ANGIO (Conv: {convenio or 'vazio'})"
                 elif "CT" in mod and any(t in descricao for t in ("TEP", "CAROTIDA", "CARÓTIDA")):
@@ -640,6 +645,12 @@ class Automacao:
             return ""
         t = colunas[idx].text.strip()
         return t.upper() if upper else t
+
+    def _extrair_idade(self, nome):
+        nums = re.findall(r"\d+", nome)
+        if not nums:
+            return None
+        return int(nums[-1])
 
     def _aguardar_ate(self, ts_alvo):
         while self.rodando and time.time() < ts_alvo:
