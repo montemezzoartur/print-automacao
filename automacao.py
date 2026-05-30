@@ -334,6 +334,8 @@ class Automacao:
                 idade = self._extrair_idade(nome)
                 ct_cranio = False
                 if "CT" in mod and ("CRANIO" in descricao or "CRÂNIO" in descricao) and idade is not None and idade <= 45:
+                    if "UNIMED" in convenio:
+                        continue
                     if (nome or data_exame) and (nome, data_exame) in self.ids_passo3:
                         continue
                     elegivel = True
