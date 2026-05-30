@@ -19,6 +19,7 @@ class Automacao:
         self.rodando = False
         self._log_fn = log_callback or print
         self.ids_passo2 = set()
+        self.ids_passo2_ct = set()
         self.ids_passo3 = set()
         self.modo = "AMBOS"
 
@@ -138,7 +139,12 @@ class Automacao:
                 agiu = self._executar_passo1_uma_acao()
                 if not self.rodando:
                     return
-                if not agiu:
+                agiu_ct, removidos = self._checar_ct_aguardando()
+                if removidos:
+                    self.log(f"  [CT] Exames encerrados sem ação: {removidos}")
+                if not self.rodando:
+                    return
+                if not agiu and not agiu_ct:
                     self._aguardar_ate(time.time() + 10)
             except Exception as e:
                 self.log(f"Erro no loop CT: {e}")
@@ -254,11 +260,11 @@ class Automacao:
         duracao = config.CHECAGEM_DURACAO_SEG
         max_acoes = config.CHECAGEM_MAX_ACOES
 
-        if not self.ids_passo2:
+        if not self.ids_passo2 and not self.ids_passo2_ct:
             self.log("=== ETAPA DE CHECAGEM — nenhum exame em espera, encerrando imediatamente ===")
             return
 
-        self.log(f"=== ETAPA DE CHECAGEM (limite {duracao}s e {max_acoes} ações, exames em espera: {sorted(self.ids_passo2)}) ===")
+        self.log(f"=== ETAPA DE CHECAGEM (limite {duracao}s e {max_acoes} ações, DX em espera: {sorted(self.ids_passo2)}, CT em espera: {sorted(self.ids_passo2_ct)}) ===")
         inicio = time.time()
         fim = inicio + duracao
         acoes = 0
@@ -266,13 +272,16 @@ class Automacao:
         while self.rodando and acoes < max_acoes and time.time() < fim:
             if not self._clicar_buscar_exames():
                 break
-            agiu, removidos = self._checar_ids_aguardando()
+            agiu_dx, removidos_dx = self._checar_ids_aguardando()
+            agiu_ct, removidos_ct = self._checar_ct_aguardando()
+            agiu = agiu_dx or agiu_ct
+            removidos = removidos_dx + removidos_ct
             if removidos:
-                self.log(f"  Exames encerrados sem ação (Conv. bateu parâmetros): {removidos}")
+                self.log(f"  Exames encerrados sem ação: {removidos}")
             if agiu:
                 acoes += 1
                 self.log(f"  Ações na checagem: {acoes}/{max_acoes}")
-            if not self.ids_passo2:
+            if not self.ids_passo2 and not self.ids_passo2_ct:
                 self.log("  Sem exames em espera — encerrando checagem antecipadamente.")
                 break
             if not agiu and not removidos:
@@ -323,8 +332,12 @@ class Automacao:
                     continue
 
                 idade = self._extrair_idade(nome)
+                ct_cranio = False
                 if "CT" in mod and ("CRANIO" in descricao or "CRÂNIO" in descricao) and idade is not None and idade <= 45:
+                    if (nome or data_exame) and (nome, data_exame) in self.ids_passo3:
+                        continue
                     elegivel = True
+                    ct_cranio = True
                     motivo = f"CT crânio, idade {idade} <= 45"
                 elif "ANGIO" in descricao:
                     elegivel = "UNIMED" not in convenio
@@ -355,6 +368,9 @@ class Automacao:
 
                 self.log(f"[Passo 1] {nome} ({data_exame}) — Mod {mod} | {motivo}")
                 self._clicar_icone_l(linha, colunas, cols["acoes"])
+                if ct_cranio and (nome or data_exame):
+                    self.ids_passo2_ct.add((nome, data_exame))
+                    self.log(f"  [CT] '{nome} ({data_exame})' marcado para verificação. ids_passo2_ct: {sorted(self.ids_passo2_ct)}")
                 return True
 
             except StaleElementReferenceException:
@@ -491,6 +507,70 @@ class Automacao:
         nao_encontrados = ids_alvo - ids_vistos
         if nao_encontrados:
             self.log(f"  Exames em espera não encontrados na tabela: {sorted(nao_encontrados)}")
+        return False, removidos
+
+    def _checar_ct_aguardando(self):
+        """Percorre a tabela uma vez. Para cada ID em ids_passo2_ct (CT crânio):
+        - Convênio vazio: mantém em espera.
+        - Convênio UNIMED: executa Passo 3 (desmarca realizante), move para ids_passo3.
+        - Outro convênio: mantém o L e remove da espera.
+        Retorna (agiu_bool, lista_de_ids_removidos_sem_acao)."""
+        cols = self._detectar_colunas()
+        if cols is None:
+            return False, []
+
+        linhas = self._linhas_seguras()
+        if linhas is None:
+            return False, []
+
+        ids_alvo = set(self.ids_passo2_ct)
+        ids_vistos = set()
+        removidos = []
+        for i, linha in enumerate(linhas):
+            try:
+                colunas = linha.find_elements(By.TAG_NAME, "td")
+                if not self._cols_validas(colunas, cols):
+                    continue
+
+                nome = self._txt(colunas, cols["nome"], upper=False)
+                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
+                chave = (nome, data_exame)
+                if not (nome or data_exame) or chave not in ids_alvo:
+                    continue
+                ids_vistos.add(chave)
+                rotulo = f"{nome} ({data_exame})"
+
+                convenio = self._txt(colunas, cols["convenio"])
+
+                if not convenio.strip():
+                    self.log(f"  [CT] '{rotulo}': Conv. ainda vazio → mantém em espera.")
+                    continue
+
+                if "UNIMED" not in convenio:
+                    self.log(f"  [CT] '{rotulo}': Conv='{convenio}' não é UNIMED → encerrado sem ação.")
+                    self.ids_passo2_ct.discard(chave)
+                    removidos.append(rotulo)
+                    continue
+
+                self.log(f"[Passo 3 CT] '{rotulo}' — Conv='{convenio}' é UNIMED. Removendo realizante.")
+                ok = self._executar_passo3(linha, colunas, cols)
+                if ok:
+                    self.ids_passo2_ct.discard(chave)
+                    self.ids_passo3.add(chave)
+                    return True, removidos
+                else:
+                    self.log(f"  Passo 3 CT falhou para '{rotulo}' — manterá em espera.")
+
+            except StaleElementReferenceException:
+                self.log("  Tabela mudou durante checagem CT — reiniciando.")
+                return self._checar_ct_aguardando()
+            except Exception as e:
+                self.log(f"  Erro checagem CT linha {i+1}: {e}")
+                continue
+
+        nao_encontrados = ids_alvo - ids_vistos
+        if nao_encontrados:
+            self.log(f"  [CT] Exames em espera não encontrados na tabela: {sorted(nao_encontrados)}")
         return False, removidos
 
     def _convenio_bate_dx(self, convenio, descricao):
