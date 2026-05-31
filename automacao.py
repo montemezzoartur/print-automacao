@@ -1,5 +1,6 @@
 import re
 import time
+import threading
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -22,25 +23,31 @@ class Automacao:
         self.ids_passo2_ct = set()
         self.ids_passo3 = set()
         self.modo = "AMBOS"
+        self._loop_lock = threading.Lock()
 
     def log(self, msg):
         hora = datetime.now().strftime("%H:%M:%S")
         self._log_fn(f"[{hora}] {msg}")
 
     def iniciar(self, modo="AMBOS"):
-        self.modo = modo if modo in ("AMBOS", "CT", "DX") else "AMBOS"
-        self.rodando = True
-        try:
-            if not self.driver:
-                self._abrir_navegador()
-                self._fazer_login()
-                self.log(f"Login realizado. Modo: {self.modo}.")
-            else:
-                self.log(f"Retomando sessão existente. Modo: {self.modo}.")
-            self._loop_principal()
-        except Exception as e:
-            self.log(f"Erro fatal: {e}")
-            self._fechar_navegador()
+        # Sinaliza qualquer loop anterior para parar e espera ele encerrar
+        # (via lock) antes de assumir o controle, evitando que um loop de
+        # outro modo continue rodando em paralelo e marque exames indevidos.
+        self.rodando = False
+        with self._loop_lock:
+            self.modo = modo if modo in ("AMBOS", "CT", "DX") else "AMBOS"
+            self.rodando = True
+            try:
+                if not self.driver:
+                    self._abrir_navegador()
+                    self._fazer_login()
+                    self.log(f"Login realizado. Modo: {self.modo}.")
+                else:
+                    self.log(f"Retomando sessão existente. Modo: {self.modo}.")
+                self._loop_principal()
+            except Exception as e:
+                self.log(f"Erro fatal: {e}")
+                self._fechar_navegador()
 
     def parar(self):
         self.rodando = False
