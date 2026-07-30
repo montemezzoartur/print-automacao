@@ -8,7 +8,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
     TimeoutException, NoSuchElementException,
     NoAlertPresentException, StaleElementReferenceException,
@@ -29,6 +28,15 @@ const linhas = Array.from(document.querySelectorAll('table tbody tr'),
     tr => Array.from(tr.querySelectorAll('td'), td => td.innerText.trim()));
 if (cab.length === 0 && linhas.length === 0) { return null; }
 return {cabecalhos: cab, linhas: linhas};
+"""
+
+# Impressão digital da tabela: quantidade de linhas e volume de texto. Serve só
+# para detectar que a busca recarregou a tabela, sem trazer o conteúdo todo.
+JS_ASSINATURA_TABELA = """
+const linhas = document.querySelectorAll('table tbody tr');
+let n = 0;
+for (const tr of linhas) { n += tr.innerText.length; }
+return linhas.length + ':' + n;
 """
 
 
@@ -110,22 +118,20 @@ class Automacao:
 
     def _fazer_login(self):
         self.log("Realizando login automático...")
-        wait = WebDriverWait(self.driver, 20)
-
-        campo_usuario = self._encontrar_elemento(wait, [
+        campo_usuario = self._encontrar_elemento([
             (By.XPATH, "//input[@placeholder='Usuário' or @placeholder='Usuario']"),
             (By.XPATH, "//input[@name='usuario' or @name='username' or @name='user']"),
             (By.XPATH, "//input[@id='usuario' or @id='username' or @id='user']"),
             (By.XPATH, "//input[@type='text']"),
-        ])
+        ], teto=20)
         if not campo_usuario:
             raise Exception("Campo de usuário não encontrado na tela de login.")
 
-        campo_senha = self._encontrar_elemento(wait, [
+        campo_senha = self._encontrar_elemento([
             (By.XPATH, "//input[@type='password']"),
             (By.XPATH, "//input[@placeholder='Senha']"),
             (By.XPATH, "//input[@name='senha' or @name='password']"),
-        ])
+        ], teto=20)
         if not campo_senha:
             raise Exception("Campo de senha não encontrado na tela de login.")
 
@@ -134,12 +140,12 @@ class Automacao:
         campo_senha.clear()
         campo_senha.send_keys(config.SENHA)
 
-        botao = self._encontrar_elemento(wait, [
+        botao = self._encontrar_elemento([
             (By.XPATH, "//button[contains(normalize-space(.),'Acessar sua conta')]"),
             (By.XPATH, "//button[contains(normalize-space(.),'Acessar')]"),
             (By.XPATH, "//button[@type='submit']"),
             (By.XPATH, "//input[@type='submit']"),
-        ], clicavel=True)
+        ], clicavel=True, teto=20)
         if not botao:
             raise Exception("Botão 'Acessar sua conta' não encontrado.")
 
@@ -346,7 +352,6 @@ class Automacao:
                 return
             if not self._executar_passo1_uma_acao():
                 return
-            time.sleep(1)
 
     def _executar_passo1_uma_acao(self):
         tabela = self._ler_tabela()
@@ -418,7 +423,6 @@ class Automacao:
                 return
             if not self._executar_passo2_uma_acao():
                 return
-            time.sleep(1)
 
     def _executar_passo2_uma_acao(self):
         tabela = self._ler_tabela()
@@ -642,22 +646,17 @@ class Automacao:
                 alvo_clique = celula
 
             self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", alvo_clique)
-            time.sleep(0.3)
             self.driver.execute_script("arguments[0].click();", alvo_clique)
 
-            wait = WebDriverWait(self.driver, 8)
-            modal = None
-            for sel in [
-                "//div[contains(@class,'modal') and (contains(.,'Editar realizante') or contains(.,'realizante'))]",
-                "//div[contains(@class,'modal-content')]",
-                "//div[@role='dialog']",
-                "//div[contains(@class,'modal')]",
-            ]:
-                try:
-                    modal = wait.until(EC.visibility_of_element_located((By.XPATH, sel)))
-                    break
-                except TimeoutException:
-                    continue
+            # Orçamento total de 3s. Antes eram 4 seletores de 8s cada: se o
+            # modal não abrisse, uma única tentativa gastava até 32 segundos —
+            # mais que os 30s de toda a etapa de checagem.
+            modal = self._encontrar_elemento([
+                (By.XPATH, "//div[contains(@class,'modal') and (contains(.,'Editar realizante') or contains(.,'realizante'))]"),
+                (By.XPATH, "//div[contains(@class,'modal-content')]"),
+                (By.XPATH, "//div[@role='dialog']"),
+                (By.XPATH, "//div[contains(@class,'modal')]"),
+            ], clicavel=True, teto=3)
 
             if modal is None:
                 self.log("  Popup 'Editar realizante' não apareceu.")
@@ -843,22 +842,22 @@ class Automacao:
 
     @_cronometrar("buscar_exames")
     def _clicar_buscar_exames(self):
-        wait = WebDriverWait(self.driver, 10)
-        botao = self._encontrar_elemento(wait, [
+        botao = self._encontrar_elemento([
             (By.XPATH, "//button[contains(translate(.,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
             (By.XPATH, "//a[contains(translate(.,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
             (By.XPATH, "//*[contains(@id,'buscar') or contains(@name,'buscar')]"),
-        ], clicavel=True)
+        ], clicavel=True, teto=5)
 
         if not botao:
             self.log("Botão 'Buscar Exames' não encontrado.")
             return False
 
+        antes = self._assinatura_tabela()
         try:
             botao.click()
         except Exception:
             self.driver.execute_script("arguments[0].click();", botao)
-        time.sleep(2)
+        self._esperar_tabela_pronta(antes)
         return True
 
     @_cronometrar("clicar_L_marcar")
@@ -887,14 +886,11 @@ class Automacao:
 
             janelas_antes = set(self.driver.window_handles)
             self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", icone)
-            time.sleep(0.3)
             self.driver.execute_script("arguments[0].click();", icone)
-            time.sleep(1)
 
             self._confirmar_popup()
-            time.sleep(1)
 
-            novas = set(self.driver.window_handles) - janelas_antes
+            novas = self._esperar_nova_janela(janelas_antes)
             for janela in novas:
                 self.driver.switch_to.window(janela)
                 self.driver.close()
@@ -915,28 +911,75 @@ class Automacao:
         except NoAlertPresentException:
             pass
 
-        wait = WebDriverWait(self.driver, 5)
-        for by, sel in [
+        # Orçamento total de 1,5s. Antes eram 4 seletores de 5s cada: se o popup
+        # não aparecesse, eram 20 segundos parados em cada marcação.
+        btn = self._encontrar_elemento([
             (By.XPATH, "//button[normalize-space(text())='Sim']"),
             (By.XPATH, "//button[contains(text(),'Sim')]"),
             (By.XPATH, "//a[normalize-space(text())='Sim']"),
             (By.XPATH, "//input[@value='Sim']"),
-        ]:
-            try:
-                btn = wait.until(EC.element_to_be_clickable((by, sel)))
-                btn.click()
-                self.log("  Popup confirmado com 'Sim'.")
-                return
-            except TimeoutException:
-                continue
+        ], clicavel=True, teto=1.5)
+
+        if btn:
+            btn.click()
+            self.log("  Popup confirmado com 'Sim'.")
+            return
 
         self.log("  Popup não encontrado (pode ter fechado sozinho).")
 
-    def _encontrar_elemento(self, wait, seletores, clicavel=False):
-        for by, sel in seletores:
-            try:
-                cond = EC.element_to_be_clickable if clicavel else EC.presence_of_element_located
-                return wait.until(cond((by, sel)))
-            except TimeoutException:
-                continue
-        return None
+    def _encontrar_elemento(self, seletores, clicavel=False, teto=5):
+        """Procura o primeiro seletor que casar, com orçamento de tempo TOTAL.
+
+        Antes cada seletor tinha seu próprio tempo limite: uma lista de 4
+        seletores de 5s podia gastar 20 segundos antes de desistir. Agora os
+        seletores são varridos em ciclo rápido dentro de um único orçamento,
+        preservando a ordem de prioridade.
+        """
+        fim = time.time() + teto
+        while True:
+            for by, sel in seletores:
+                for e in self.driver.find_elements(by, sel):
+                    try:
+                        if not clicavel:
+                            return e
+                        if e.is_displayed() and e.is_enabled():
+                            return e
+                    except StaleElementReferenceException:
+                        continue
+            if time.time() >= fim:
+                return None
+            time.sleep(0.1)
+
+    def _assinatura_tabela(self):
+        """Impressão digital barata da tabela, para saber quando ela recarregou."""
+        try:
+            return self.driver.execute_script(JS_ASSINATURA_TABELA)
+        except Exception:
+            return None
+
+    def _esperar_tabela_pronta(self, antes, teto=2.0, estabilidade=0.8):
+        """Espera a tabela responder ao clique em Buscar Exames.
+
+        Substitui um sleep(2) fixo. Sai assim que a tabela muda. Se ela não
+        mudar dentro do tempo de estabilidade, assume que a busca devolveu o
+        mesmo resultado e segue — ler uma tabela um pouco defasada é seguro,
+        porque _elementos_da_linha confere nome e data antes de qualquer clique.
+        """
+        fim = time.time() + teto
+        limite_parado = time.time() + estabilidade
+        while time.time() < fim:
+            time.sleep(0.1)
+            if self._assinatura_tabela() != antes:
+                return
+            if time.time() >= limite_parado:
+                return
+
+    def _esperar_nova_janela(self, janelas_antes, teto=1.0):
+        """Espera a aba extra abrir depois do clique no 'L'. Antes era sleep(1) fixo."""
+        fim = time.time() + teto
+        while time.time() < fim:
+            novas = set(self.driver.window_handles) - janelas_antes
+            if novas:
+                return novas
+            time.sleep(0.05)
+        return set()

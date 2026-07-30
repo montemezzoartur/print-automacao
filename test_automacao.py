@@ -4,6 +4,7 @@ Rodar com:  python -m unittest test_automacao -v
 """
 import os
 import tempfile
+import time
 import unittest
 
 import automacao
@@ -244,6 +245,68 @@ class RegraDeConvenioDX(SemNavegador):
     def test_angio_bate_para_qualquer_convenio_menos_unimed(self):
         self.assertTrue(self.a._convenio_bate_dx("OUTRO", "ANGIO"))
         self.assertFalse(self.a._convenio_bate_dx("UNIMED", "ANGIO"))
+
+
+class ElementoFalso:
+    def __init__(self, sel, visivel=True, ativo=True):
+        self.sel = sel
+        self._visivel = visivel
+        self._ativo = ativo
+
+    def is_displayed(self):
+        return self._visivel
+
+    def is_enabled(self):
+        return self._ativo
+
+
+class NavegadorFalso:
+    """Só o suficiente para exercitar _encontrar_elemento sem abrir o Chrome."""
+
+    def __init__(self, casam=(), invisiveis=()):
+        self.casam = dict(casam)
+        self.invisiveis = set(invisiveis)
+        self.consultas = 0
+
+    def find_elements(self, by, sel):
+        self.consultas += 1
+        if sel not in self.casam:
+            return []
+        return [ElementoFalso(sel, visivel=sel not in self.invisiveis)]
+
+
+class OrcamentoDeTempo(SemNavegador):
+    """O defeito central da versão antiga: cada seletor gastava o tempo inteiro."""
+
+    SELETORES = [("xpath", f"s{i}") for i in range(4)]
+
+    def test_quatro_seletores_nao_gastam_quatro_vezes_o_teto(self):
+        self.a.driver = NavegadorFalso()
+        inicio = time.monotonic()
+        self.assertIsNone(self.a._encontrar_elemento(self.SELETORES, teto=0.4))
+        gasto = time.monotonic() - inicio
+        self.assertLess(gasto, 1.0,
+                        f"gastou {gasto:.1f}s — o orçamento tem que ser total, não por seletor")
+
+    def test_acha_de_primeira_sem_esperar(self):
+        self.a.driver = NavegadorFalso(casam={"s0": 1})
+        inicio = time.monotonic()
+        achado = self.a._encontrar_elemento(self.SELETORES, teto=5)
+        self.assertEqual(achado.sel, "s0")
+        self.assertLess(time.monotonic() - inicio, 0.5, "não pode esperar quando já achou")
+
+    def test_respeita_a_ordem_de_prioridade(self):
+        self.a.driver = NavegadorFalso(casam={"s1": 1, "s3": 1})
+        self.assertEqual(self.a._encontrar_elemento(self.SELETORES, teto=1).sel, "s1")
+
+    def test_clicavel_ignora_elemento_invisivel(self):
+        self.a.driver = NavegadorFalso(casam={"s0": 1, "s2": 1}, invisiveis={"s0"})
+        self.assertEqual(self.a._encontrar_elemento(self.SELETORES, clicavel=True, teto=1).sel, "s2")
+
+    def test_sem_clicavel_aceita_elemento_invisivel(self):
+        # presenca_of_element_located, o comportamento antigo, não exigia visibilidade
+        self.a.driver = NavegadorFalso(casam={"s0": 1}, invisiveis={"s0"})
+        self.assertEqual(self.a._encontrar_elemento(self.SELETORES, teto=1).sel, "s0")
 
 
 if __name__ == "__main__":
