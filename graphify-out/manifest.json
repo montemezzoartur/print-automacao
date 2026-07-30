@@ -15,13 +15,38 @@
     "semantic_hash": "bfe7585153729309a12d550dc9a42df2"
   },
   "config.exemplo.py": {
-    "mtime": 1779365422.0,
-    "ast_hash": "f4b6b8d2593b9edb49e291acd228ae52",
-    "semantic_hash": "f4b6b8d2593b9edb49e291acd228ae52"
+    "mtime": 1785437148.895103,
+    "ast_hash": "8348f65ccd0bfa5cf787cf5b8d135acd",
+    "semantic_hash": ""
   },
   "main.py": {
     "mtime": 1779016968.0,
     "ast_hash": "a8db35efddd9d22ed14560bf39fbaf24",
     "semantic_hash": "a8db35efddd9d22ed14560bf39fbaf24"
+  },
+  "CLAUDE.md": {
+    "mtime": 1785437198.19788,
+    "ast_hash": "3880b13a41b43f21faf5174ec3a83490",
+    "semantic_hash": ""
+  },
+  "requirements.txt": {
+    "mtime": 1785437146.9918787,
+    "ast_hash": "e60f91a067f7558c4541262be7d5d46b",
+    "semantic_hash": ""
+  },
+  "login.png": {
+    "mtime": 1779659233.0,
+    "ast_hash": "eb9d6bdd2c7b4bf364e3ce600b2a54ce",
+    "semantic_hash": ""
+  },
+  "popup_realizante.png": {
+    "mtime": 1778812168.0,
+    "ast_hash": "d5948b95bfd80b7cde6aedef790ab12f",
+    "semantic_hash": ""
+  },
+  "tela.png": {
+    "mtime": 1778642462.0,
+    "ast_hash": "c5818679474c5efb81551bfd327551c5",
+    "semantic_hash": ""
   }
 }

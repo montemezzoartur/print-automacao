@@ -18,7 +18,6 @@ A interface tem três botões — **CT e DX**, **CT** e **DX** — que escolhem 
 | `config.exemplo.py` | Template de `config.py` com valores fictícios |
 | `instalar.bat` | Instalador completo: acha ou instala o Python, instala as dependências, cria o `config.py` e o atalho na área de trabalho |
 | `iniciar.bat` | Lançador — duplo clique para abrir o app (é reescrito pelo `instalar.bat`) |
-| `instalar_driver.bat` | **Obsoleto** — baixa o driver do Edge, que o código não usa mais |
 | `Print Automação.lnk` | Atalho do Windows na pasta do projeto |
 | `*.png` | Capturas de tela do PACS, guardadas como referência |
 
@@ -48,7 +47,6 @@ Copiar `config.exemplo.py` para `config.py` e preencher — o `instalar.bat` já
 | `CONVENIOS_ALVO` | Convênios que autorizam marcar o realizante |
 | `VARREDURA_DURACAO_SEG` / `VARREDURA_VERIFICACOES` | Duração da etapa de varredura e em quantas fatias ela é dividida |
 | `CHECAGEM_DURACAO_SEG` / `CHECAGEM_MAX_ACOES` | Limites da etapa de checagem |
-| `INTERVALO_SEGUNDOS` | **Não é usado pelo código** — sobra de uma versão anterior |
 
 `config.py` está no `.gitignore` e nunca deve ser commitado.
 
@@ -58,8 +56,6 @@ Copiar `config.exemplo.py` para `config.py` e preencher — o `instalar.bat` já
 - `selenium` 4.21 — controla o Chrome
 - `tkinter` — interface gráfica (incluso no Python)
 - Google Chrome instalado no sistema (o Selenium baixa o driver sozinho)
-
-O `requirements.txt` também lista `webdriver-manager` 4.0, mas nenhum arquivo `.py` o importa — é dependência morta.
 
 ## Fluxo da automação (`automacao.py`)
 
