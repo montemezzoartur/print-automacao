@@ -1,18 +1,18 @@
 {
   ".claude/settings.json": {
-    "mtime": 1785436213.4633472,
-    "ast_hash": "c6335e2f15f305ac6d3e9cd892b29cb9",
-    "semantic_hash": "c6335e2f15f305ac6d3e9cd892b29cb9"
+    "mtime": 1785438335.129047,
+    "ast_hash": "3447e8ebf62983088bbcc1b77d10ef87",
+    "semantic_hash": ""
   },
   ".claude/settings.local.json": {
-    "mtime": 1785436213.0764272,
-    "ast_hash": "e5311251024aefa1364b8b7b04e28eb5",
-    "semantic_hash": "e5311251024aefa1364b8b7b04e28eb5"
+    "mtime": 1785437334.3832316,
+    "ast_hash": "2b4c1853b4c9d7daeeb3f05096defaef",
+    "semantic_hash": ""
   },
   "automacao.py": {
-    "mtime": 1780189001.1931868,
-    "ast_hash": "bfe7585153729309a12d550dc9a42df2",
-    "semantic_hash": "bfe7585153729309a12d550dc9a42df2"
+    "mtime": 1785440875.0444636,
+    "ast_hash": "2e862d2037ddcd4baa00e7bc76e59b01",
+    "semantic_hash": ""
   },
   "config.exemplo.py": {
     "mtime": 1785437148.895103,
@@ -25,8 +25,8 @@
     "semantic_hash": "a8db35efddd9d22ed14560bf39fbaf24"
   },
   "CLAUDE.md": {
-    "mtime": 1785437198.19788,
-    "ast_hash": "3880b13a41b43f21faf5174ec3a83490",
+    "mtime": 1785438445.6417768,
+    "ast_hash": "fe88002b5b1de97ddebc69c0bb28a432",
     "semantic_hash": ""
   },
   "requirements.txt": {
@@ -47,6 +47,26 @@
   "tela.png": {
     "mtime": 1778642462.0,
     "ast_hash": "c5818679474c5efb81551bfd327551c5",
+    "semantic_hash": ""
+  },
+  "test_automacao.py": {
+    "mtime": 1785440907.0537868,
+    "ast_hash": "a31b37f4e8053cb3cee6f60b6734e013",
+    "semantic_hash": ""
+  },
+  ".claude/skills/ponytail-audit/SKILL.md": {
+    "mtime": 1782959196.4233088,
+    "ast_hash": "14b0a5b743fe349763c26323d5526539",
+    "semantic_hash": ""
+  },
+  ".claude/skills/ponytail-review/SKILL.md": {
+    "mtime": 1782959196.3371215,
+    "ast_hash": "0e4dc0ffba47ca7a35339deb1c052666",
+    "semantic_hash": ""
+  },
+  ".claude/skills/ponytail/SKILL.md": {
+    "mtime": 1782959196.2621562,
+    "ast_hash": "85276751f79e40f6db09692d7c0b84c7",
     "semantic_hash": ""
   }
 }
