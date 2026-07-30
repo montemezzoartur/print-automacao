@@ -1,0 +1,113 @@
+{
+  "communities": {
+    "0": [
+      "automacao_automacao_checar_ct_aguardando",
+      "automacao_automacao_checar_ids_aguardando",
+      "automacao_automacao_cols_validas",
+      "automacao_automacao_convenio_bate_dx",
+      "automacao_automacao_detectar_colunas",
+      "automacao_automacao_executar_passo2_uma_acao",
+      "automacao_automacao_executar_passo3",
+      "automacao_automacao_linhas_seguras",
+      "automacao_automacao_reconciliar_uma_acao",
+      "automacao_automacao_txt",
+      "automacao_rationale_456"
+    ],
+    "1": [
+      "automacao",
+      "automacao_automacao",
+      "automacao_automacao_clicar_icone_l",
+      "automacao_automacao_confirmar_popup",
+      "automacao_automacao_executar_passo1_ate_esgotar",
+      "automacao_automacao_executar_passo1_uma_acao",
+      "automacao_automacao_extrair_idade",
+      "automacao_automacao_init",
+      "main"
+    ],
+    "2": [
+      "main_app",
+      "main_app_ativar",
+      "main_app_construir_interface",
+      "main_app_desativar",
+      "main_app_init",
+      "main_app_inserir_log",
+      "main_app_log",
+      "main_app_toggle"
+    ],
+    "3": [
+      "automacao_automacao_abrir_navegador",
+      "automacao_automacao_fazer_login",
+      "automacao_automacao_fechar_navegador",
+      "automacao_automacao_iniciar",
+      "automacao_automacao_log",
+      "automacao_automacao_parar"
+    ],
+    "4": [
+      "automacao_automacao_clicar_buscar_exames",
+      "automacao_automacao_encontrar_elemento",
+      "automacao_automacao_etapa_checagem",
+      "automacao_automacao_etapa_reconciliacao",
+      "automacao_automacao_loop_principal"
+    ],
+    "5": [
+      "automacao_automacao_aguardar_ate",
+      "automacao_automacao_etapa_varredura",
+      "automacao_automacao_executar_passo2_ate_esgotar",
+      "automacao_automacao_loop_ct_only"
+    ],
+    "6": [
+      "config_exemplo"
+    ]
+  },
+  "cohesion": {
+    "0": 0.41818181818181815,
+    "1": 0.3611111111111111,
+    "2": 0.39285714285714285,
+    "3": 0.5333333333333333,
+    "4": 0.5,
+    "5": 0.5,
+    "6": 1.0
+  },
+  "gods": [
+    {
+      "id": "automacao_automacao",
+      "label": "Automacao",
+      "degree": 35
+    },
+    {
+      "id": "main_app",
+      "label": "App",
+      "degree": 9
+    },
+    {
+      "id": "automacao_rationale_456",
+      "label": "Percorre a tabela uma vez. Para cada ID em ids_passo2 encontrado:         - Conv",
+      "degree": 2
+    }
+  ],
+  "surprises": [
+    {
+      "source": "App",
+      "target": "Automacao",
+      "source_files": [
+        "main.py",
+        "automacao.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    }
+  ],
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `Automacao` connect `Community 1` to `Community 0`, `Community 2`, `Community 3`, `Community 4`, `Community 5`?",
+      "why": "High betweenness centrality (0.646) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `App` connect `Community 2` to `Community 1`?",
+      "why": "High betweenness centrality (0.231) - this node is a cross-community bridge."
+    }
+  ]
+}

@@ -9,3 +9,8 @@ venv/
 .claude/skills/
 .cursor/
 .windsurf/
+
+# graphify: estado local da maquina (caminho absoluto desta maquina) - nunca versionar
+/graphify-out/.graphify_python
+/graphify-out/.graphify_root
+/graphify-out/.needs_update

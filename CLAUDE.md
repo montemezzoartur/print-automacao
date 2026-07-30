@@ -109,16 +109,19 @@ Esta parte define como devemos trabalhar juntos. Ela complementa o CLAUDE.md glo
 
 - Manter um arquivo `memory.md` atualizado a cada passo, avanço ou evolução do projeto.
 
-## graphify (quando o projeto usar)
-
-- Para perguntas sobre o código, primeiro rodar `graphify query "<pergunta>"` quando `graphify-out/graph.json` existir. Usar `graphify path "<A>" "<B>"` para relações e `graphify explain "<conceito>"` para conceitos focados — retornam um subgrafo pequeno, mais enxuto que o `GRAPH_REPORT.md` ou o grep cru.
-- Se `graphify-out/wiki/index.md` existir, usá-lo para navegação ampla em vez de folhear o código cru.
-- Ler `graphify-out/GRAPH_REPORT.md` só para revisão ampla de arquitetura, ou quando `query`/`path`/`explain` não trouxerem contexto suficiente.
-- Depois de modificar código, rodar `graphify update .` para manter o grafo atual (AST, sem custo de API).
-
 ## Prioridade das diretrizes
 
 1. Instruções diretas suas (no chat).
 2. Este arquivo (CLAUDE.md do projeto).
 3. CLAUDE.md global.
 4. Comportamento padrão.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
