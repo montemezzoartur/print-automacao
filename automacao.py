@@ -1,5 +1,7 @@
+import os
 import re
 import time
+import functools
 import threading
 from datetime import datetime
 from selenium import webdriver
@@ -14,6 +16,23 @@ from selenium.common.exceptions import (
 import config
 
 
+LOG_ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "automacao.log")
+
+
+def _cronometrar(nome):
+    """Grava a duração da função no arquivo de log (não na janela do app)."""
+    def decorador(fn):
+        @functools.wraps(fn)
+        def wrapper(self, *args, **kwargs):
+            t0 = time.time()
+            try:
+                return fn(self, *args, **kwargs)
+            finally:
+                self.log(f"[tempo] {nome}: {time.time() - t0:.2f}s", so_arquivo=True)
+        return wrapper
+    return decorador
+
+
 class Automacao:
     def __init__(self, log_callback=None):
         self.driver = None
@@ -25,9 +44,16 @@ class Automacao:
         self.modo = "AMBOS"
         self._loop_lock = threading.Lock()
 
-    def log(self, msg):
-        hora = datetime.now().strftime("%H:%M:%S")
-        self._log_fn(f"[{hora}] {msg}")
+    def log(self, msg, so_arquivo=False):
+        agora = datetime.now()
+        linha = f"[{agora:%H:%M:%S}] {msg}"
+        if not so_arquivo:
+            self._log_fn(linha)
+        try:
+            with open(LOG_ARQUIVO, "a", encoding="utf-8") as f:
+                f.write(f"{agora:%Y-%m-%d} {linha}\n")
+        except Exception:
+            pass
 
     def iniciar(self, modo="AMBOS"):
         # Sinaliza qualquer loop anterior para parar e espera ele encerrar
@@ -587,6 +613,7 @@ class Automacao:
             return "UNIMED" not in convenio
         return any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
 
+    @_cronometrar("passo3_desmarcar")
     def _executar_passo3(self, linha, colunas, cols):
         try:
             col_realizante = cols["realizante"]
@@ -745,6 +772,7 @@ class Automacao:
         while self.rodando and time.time() < ts_alvo:
             time.sleep(0.5)
 
+    @_cronometrar("buscar_exames")
     def _clicar_buscar_exames(self):
         wait = WebDriverWait(self.driver, 10)
         botao = self._encontrar_elemento(wait, [
@@ -764,6 +792,7 @@ class Automacao:
         time.sleep(2)
         return True
 
+    @_cronometrar("clicar_L_marcar")
     def _clicar_icone_l(self, linha, colunas, col_acoes):
         try:
             alvo = colunas[col_acoes] if col_acoes >= 0 and col_acoes < len(colunas) else linha

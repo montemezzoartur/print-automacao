@@ -1,4 +1,5 @@
 config.py
+automacao.log
 __pycache__/
 *.pyc
 .venv/
