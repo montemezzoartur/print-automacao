@@ -67,7 +67,7 @@ Copiar `config.exemplo.py` para `config.py` e preencher — o `instalar.bat` já
 
 | Etapa | O que faz |
 |---|---|
-| 1. Reconciliação (`_etapa_reconciliacao`) | Limpa sobras de sessões anteriores: exames **DX** com o realizante marcado mas convênio que não bate as regras → Passo 3. Máximo de 10 ações. |
+| 1. Reconciliação (`_etapa_reconciliacao`) | Limpa sobras de sessões anteriores. Só age em exames **DX** que reúnam todas estas condições: realizante preenchido com `REALIZANTE_NOME`, convênio já preenchido, convênio que **não** bate as regras DX, e coluna **Laudo vazia** — exame já laudado nunca é tocado. Então executa o Passo 3. Máximo de 10 ações. |
 | 2. Varredura (`_etapa_varredura`) | Alterna Passo 1 e Passo 2 até esgotar. Dura `VARREDURA_DURACAO_SEG`, dividido em `VARREDURA_VERIFICACOES` fatias. |
 | 3. Checagem (`_etapa_checagem`) | Revisita os exames deixados em espera. Limitada por `CHECAGEM_DURACAO_SEG` e `CHECAGEM_MAX_ACOES`. Se não há ninguém em espera, encerra na hora. |
 
@@ -111,6 +111,10 @@ Cada exame é identificado pelo par `(nome, data do exame)`.
 - `ids_passo3` — exames já desmarcados. O Passo 2 e a regra de CT crânio do Passo 1 consultam essa lista para não remarcar; as demais regras do Passo 1 (ANGIO, CT especial, convênio da lista) **não** a consultam
 
 ## Atualizar repositório GitHub após mudanças
+
+**Normalmente não é preciso fazer nada.** Existe um hook `Stop` em `.claude/settings.json` que roda `git add .`, `git commit` e `git push` automaticamente ao fim de cada resposta do Claude Code, com a mensagem `auto: atualizacao via Claude Code`.
+
+Para commitar manualmente com uma mensagem descritiva:
 
 ```
 cd C:\Users\artur\Desktop\Projetos\Print
