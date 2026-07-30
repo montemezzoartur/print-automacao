@@ -18,6 +18,19 @@ import config
 
 LOG_ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "automacao.log")
 
+# Convênios que valem para DX mas não para CT.
+CONVENIOS_SEM_CT = ("SAS", "FLIP", "ARAMART", "AVICOLA", "HI-MIX")
+
+# Lê a tabela toda de uma vez. Os seletores espelham exatamente os XPaths que o
+# código usava antes: //table//th e //table//tbody//tr, na mesma ordem.
+JS_LER_TABELA = """
+const cab = Array.from(document.querySelectorAll('table th'), h => h.innerText.trim());
+const linhas = Array.from(document.querySelectorAll('table tbody tr'),
+    tr => Array.from(tr.querySelectorAll('td'), td => td.innerText.trim()));
+if (cab.length === 0 && linhas.length === 0) { return null; }
+return {cabecalhos: cab, linhas: linhas};
+"""
+
 
 def _cronometrar(nome):
     """Grava a duração da função no arquivo de log (não na janela do app)."""
@@ -201,7 +214,12 @@ class Automacao:
             self.log(f"  Reconciliação concluída — {acoes} exame(s) regularizado(s).")
 
     def _reconciliar_uma_acao(self):
-        cols = self._detectar_colunas()
+        tabela = self._ler_tabela()
+        if tabela is None:
+            return False
+        cabecalhos, linhas = tabela
+
+        cols = self._detectar_colunas(cabecalhos)
         if cols is None:
             return False
         if cols.get("realizante", -1) < 0:
@@ -211,42 +229,41 @@ class Automacao:
             self.log("  Coluna Laudo não localizada — reconciliação abortada.")
             return False
 
-        linhas = self._linhas_seguras()
-        if linhas is None:
-            return False
-
         alvo_realizante = config.REALIZANTE_NOME.upper()
 
-        for i, linha in enumerate(linhas):
+        for i, celulas in enumerate(linhas):
             try:
-                colunas = linha.find_elements(By.TAG_NAME, "td")
-                if not self._cols_validas(colunas, cols):
+                if not self._cols_validas(celulas, cols):
                     continue
 
-                mod = self._txt(colunas, cols["mod"])
+                mod = self._txt(celulas, cols["mod"])
                 if "DX" not in mod:
                     continue
 
-                realizante = self._txt(colunas, cols["realizante"])
+                realizante = self._txt(celulas, cols["realizante"])
                 if alvo_realizante not in realizante:
                     continue
 
-                convenio = self._txt(colunas, cols["convenio"])
+                convenio = self._txt(celulas, cols["convenio"])
                 if not convenio.strip():
                     continue
 
-                descricao = self._txt(colunas, cols["descricao"])
+                descricao = self._txt(celulas, cols["descricao"])
                 if self._convenio_bate_dx(convenio, descricao):
                     continue
 
-                nome = self._txt(colunas, cols["nome"], upper=False)
-                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
+                nome = self._txt(celulas, cols["nome"], upper=False)
+                data_exame = self._txt(celulas, cols["data_exame"], upper=False)
                 rotulo = f"{nome} ({data_exame})"
 
-                laudo = self._txt(colunas, cols["laudo"], upper=False)
+                laudo = self._txt(celulas, cols["laudo"], upper=False)
                 if laudo.strip():
                     self.log(f"[Reconciliação] '{rotulo}' — Laudo preenchido ('{laudo}'). Ignorado.")
                     continue
+
+                linha, colunas = self._elementos_da_linha(i, (nome, data_exame), cols)
+                if linha is None:
+                    return False
 
                 self.log(f"[Reconciliação] '{rotulo}' — Conv='{convenio}' NÃO bate parâmetros DX. Removendo realizante órfão.")
                 ok = self._executar_passo3(linha, colunas, cols)
@@ -332,12 +349,13 @@ class Automacao:
             time.sleep(1)
 
     def _executar_passo1_uma_acao(self):
-        cols = self._detectar_colunas()
-        if cols is None:
+        tabela = self._ler_tabela()
+        if tabela is None:
             return False
+        cabecalhos, linhas = tabela
 
-        linhas = self._linhas_seguras()
-        if linhas is None:
+        cols = self._detectar_colunas(cabecalhos)
+        if cols is None:
             return False
 
         if self.modo == "CT":
@@ -347,59 +365,34 @@ class Automacao:
         else:
             mods_filtro = config.MODS_ALVO
 
-        for i, linha in enumerate(linhas):
+        for i, celulas in enumerate(linhas):
             try:
-                colunas = linha.find_elements(By.TAG_NAME, "td")
-                if not self._cols_validas(colunas, cols):
+                if not self._cols_validas(celulas, cols):
                     continue
 
-                mod = self._txt(colunas, cols["mod"])
-                convenio = self._txt(colunas, cols["convenio"])
-                descricao = self._txt(colunas, cols["descricao"])
-                realizante = self._txt(colunas, cols["realizante"], upper=False)
-                nome = self._txt(colunas, cols["nome"], upper=False)
-                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
+                mod = self._txt(celulas, cols["mod"])
+                convenio = self._txt(celulas, cols["convenio"])
+                descricao = self._txt(celulas, cols["descricao"])
+                realizante = self._txt(celulas, cols["realizante"], upper=False)
+                nome = self._txt(celulas, cols["nome"], upper=False)
+                data_exame = self._txt(celulas, cols["data_exame"], upper=False)
 
-                mod_ok = any(m in mod for m in mods_filtro)
-                if not mod_ok:
+                if not any(m in mod for m in mods_filtro):
                     continue
 
-                idade = self._extrair_idade(nome)
-                ct_cranio = False
-                if "CT" in mod and ("CRANIO" in descricao or "CRÂNIO" in descricao) and idade is not None and idade <= 45:
-                    if "UNIMED" in convenio:
-                        continue
-                    if (nome or data_exame) and (nome, data_exame) in self.ids_passo3:
-                        continue
-                    elegivel = True
-                    ct_cranio = True
-                    motivo = f"CT crânio, idade {idade} <= 45"
-                elif "ANGIO" in descricao:
-                    elegivel = "UNIMED" not in convenio
-                    motivo = f"ANGIO (Conv: {convenio or 'vazio'})"
-                elif "CT" in mod and any(t in descricao for t in ("TEP", "CAROTIDA", "CARÓTIDA")):
-                    elegivel = "UNIMED" not in convenio
-                    motivo = f"CT especial (Conv: {convenio or 'vazio'})"
-                else:
-                    conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
-                    if conv_ok and "SAS" in convenio and "CT" in mod:
-                        conv_ok = False
-                    if conv_ok and "FLIP" in convenio and "CT" in mod:
-                        conv_ok = False
-                    if conv_ok and "ARAMART" in convenio and "CT" in mod:
-                        conv_ok = False
-                    if conv_ok and "AVICOLA" in convenio and "CT" in mod:
-                        conv_ok = False
-                    if conv_ok and "HI-MIX" in convenio and "CT" in mod:
-                        conv_ok = False
-                    elegivel = conv_ok
-                    motivo = f"Conv: {convenio}"
+                ja_desmarcado = bool(nome or data_exame) and (nome, data_exame) in self.ids_passo3
+                elegivel, ct_cranio, motivo = self._avaliar_passo1(
+                    mod, convenio, descricao, nome, ja_desmarcado)
 
                 if not elegivel:
                     continue
 
                 if realizante.strip():
                     continue
+
+                linha, colunas = self._elementos_da_linha(i, (nome, data_exame), cols)
+                if linha is None:
+                    return False
 
                 self.log(f"[Passo 1] {nome} ({data_exame}) — Mod {mod} | {motivo}")
                 self._clicar_icone_l(linha, colunas, cols["acoes"])
@@ -428,25 +421,25 @@ class Automacao:
             time.sleep(1)
 
     def _executar_passo2_uma_acao(self):
-        cols = self._detectar_colunas()
+        tabela = self._ler_tabela()
+        if tabela is None:
+            return False
+        cabecalhos, linhas = tabela
+
+        cols = self._detectar_colunas(cabecalhos)
         if cols is None:
             return False
 
-        linhas = self._linhas_seguras()
-        if linhas is None:
-            return False
-
-        for i, linha in enumerate(linhas):
+        for i, celulas in enumerate(linhas):
             try:
-                colunas = linha.find_elements(By.TAG_NAME, "td")
-                if not self._cols_validas(colunas, cols):
+                if not self._cols_validas(celulas, cols):
                     continue
 
-                mod = self._txt(colunas, cols["mod"])
-                convenio = self._txt(colunas, cols["convenio"])
-                realizante = self._txt(colunas, cols["realizante"], upper=False)
-                nome = self._txt(colunas, cols["nome"], upper=False)
-                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
+                mod = self._txt(celulas, cols["mod"])
+                convenio = self._txt(celulas, cols["convenio"])
+                realizante = self._txt(celulas, cols["realizante"], upper=False)
+                nome = self._txt(celulas, cols["nome"], upper=False)
+                data_exame = self._txt(celulas, cols["data_exame"], upper=False)
                 chave = (nome, data_exame)
 
                 if "DX" not in mod:
@@ -457,6 +450,10 @@ class Automacao:
                     continue
                 if (nome or data_exame) and chave in self.ids_passo3:
                     continue
+
+                linha, colunas = self._elementos_da_linha(i, chave, cols)
+                if linha is None:
+                    return False
 
                 self.log(f"[Passo 2] '{nome} ({data_exame})' — Mod {mod} (Conv. e Realizante vazios)")
                 self._clicar_icone_l(linha, colunas, cols["acoes"])
@@ -484,34 +481,33 @@ class Automacao:
         - Convênio bate Passo 1: remove da espera.
         - Convênio NÃO bate: executa Passo 3, move para ids_passo3.
         Retorna (agiu_bool, lista_de_ids_removidos_sem_acao)."""
-        cols = self._detectar_colunas()
-        if cols is None:
+        tabela = self._ler_tabela()
+        if tabela is None:
             return False, []
+        cabecalhos, linhas = tabela
 
-        linhas = self._linhas_seguras()
-        if linhas is None:
+        cols = self._detectar_colunas(cabecalhos)
+        if cols is None:
             return False, []
 
         ids_alvo = set(self.ids_passo2)
         ids_vistos = set()
         removidos = []
-        for i, linha in enumerate(linhas):
+        for i, celulas in enumerate(linhas):
             try:
-                colunas = linha.find_elements(By.TAG_NAME, "td")
-                if not self._cols_validas(colunas, cols):
+                if not self._cols_validas(celulas, cols):
                     continue
 
-                nome = self._txt(colunas, cols["nome"], upper=False)
-                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
+                nome = self._txt(celulas, cols["nome"], upper=False)
+                data_exame = self._txt(celulas, cols["data_exame"], upper=False)
                 chave = (nome, data_exame)
                 if not (nome or data_exame) or chave not in ids_alvo:
                     continue
                 ids_vistos.add(chave)
                 rotulo = f"{nome} ({data_exame})"
 
-                mod = self._txt(colunas, cols["mod"])
-                convenio = self._txt(colunas, cols["convenio"])
-                descricao = self._txt(colunas, cols["descricao"])
+                convenio = self._txt(celulas, cols["convenio"])
+                descricao = self._txt(celulas, cols["descricao"])
 
                 if not convenio.strip():
                     self.log(f"  '{rotulo}': Conv. ainda vazio → mantém em espera.")
@@ -522,6 +518,10 @@ class Automacao:
                     self.ids_passo2.discard(chave)
                     removidos.append(rotulo)
                     continue
+
+                linha, colunas = self._elementos_da_linha(i, chave, cols)
+                if linha is None:
+                    return False, removidos
 
                 self.log(f"[Passo 3] '{rotulo}' — Conv='{convenio}' NÃO bate parâmetros. Removendo realizante.")
                 ok = self._executar_passo3(linha, colunas, cols)
@@ -550,32 +550,32 @@ class Automacao:
         - Convênio UNIMED: executa Passo 3 (desmarca realizante), move para ids_passo3.
         - Outro convênio: mantém o L e remove da espera.
         Retorna (agiu_bool, lista_de_ids_removidos_sem_acao)."""
-        cols = self._detectar_colunas()
-        if cols is None:
+        tabela = self._ler_tabela()
+        if tabela is None:
             return False, []
+        cabecalhos, linhas = tabela
 
-        linhas = self._linhas_seguras()
-        if linhas is None:
+        cols = self._detectar_colunas(cabecalhos)
+        if cols is None:
             return False, []
 
         ids_alvo = set(self.ids_passo2_ct)
         ids_vistos = set()
         removidos = []
-        for i, linha in enumerate(linhas):
+        for i, celulas in enumerate(linhas):
             try:
-                colunas = linha.find_elements(By.TAG_NAME, "td")
-                if not self._cols_validas(colunas, cols):
+                if not self._cols_validas(celulas, cols):
                     continue
 
-                nome = self._txt(colunas, cols["nome"], upper=False)
-                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
+                nome = self._txt(celulas, cols["nome"], upper=False)
+                data_exame = self._txt(celulas, cols["data_exame"], upper=False)
                 chave = (nome, data_exame)
                 if not (nome or data_exame) or chave not in ids_alvo:
                     continue
                 ids_vistos.add(chave)
                 rotulo = f"{nome} ({data_exame})"
 
-                convenio = self._txt(colunas, cols["convenio"])
+                convenio = self._txt(celulas, cols["convenio"])
 
                 if not convenio.strip():
                     self.log(f"  [CT] '{rotulo}': Conv. ainda vazio → mantém em espera.")
@@ -586,6 +586,10 @@ class Automacao:
                     self.ids_passo2_ct.discard(chave)
                     removidos.append(rotulo)
                     continue
+
+                linha, colunas = self._elementos_da_linha(i, chave, cols)
+                if linha is None:
+                    return False, removidos
 
                 self.log(f"[Passo 3 CT] '{rotulo}' — Conv='{convenio}' é UNIMED. Removendo realizante.")
                 ok = self._executar_passo3(linha, colunas, cols)
@@ -714,11 +718,76 @@ class Automacao:
 
     # ---------- AUXILIARES ----------
 
-    def _detectar_colunas(self):
-        headers = self.driver.find_elements(By.XPATH, "//table//th")
+    def _ler_tabela(self):
+        """Lê cabeçalhos e células da tabela inteira numa única chamada ao navegador.
+
+        Antes cada célula custava uma ida e volta ao Chrome (~210 por varredura,
+        uns 2 segundos). Agora é uma chamada só e toda a filtragem acontece em
+        Python, instantânea. Devolve (cabecalhos, linhas) como listas de texto.
+        """
+        try:
+            dados = self.driver.execute_script(JS_LER_TABELA)
+        except Exception as e:
+            self.log(f"Erro ao ler a tabela: {e}")
+            return None
+        if not dados:
+            self.log("Tabela não encontrada na página.")
+            return None
+        return dados["cabecalhos"], dados["linhas"]
+
+    def _elementos_da_linha(self, indice, esperado, cols):
+        """Busca no navegador o <tr> da posição indicada, para poder clicar nele.
+
+        A tabela é lida por JavaScript e o clique acontece depois. Se a tabela
+        mudou nesse intervalo, o índice pode apontar para outro paciente — por
+        isso conferimos nome e data antes de liberar a ação.
+        """
+        linhas = self._linhas_seguras()
+        if linhas is None or indice >= len(linhas):
+            return None, None
+        linha = linhas[indice]
+        colunas = linha.find_elements(By.TAG_NAME, "td")
+        atual = (self._txt_elemento(colunas, cols["nome"], upper=False),
+                 self._txt_elemento(colunas, cols["data_exame"], upper=False))
+        if atual != esperado:
+            self.log(f"  Tabela mudou antes do clique — linha {indice + 1} agora é "
+                     f"'{atual[0]} ({atual[1]})'. Ação cancelada por segurança.")
+            return None, None
+        return linha, colunas
+
+    def _txt_elemento(self, colunas, idx, upper=True):
+        """Como _txt, mas para células vindas do Selenium.
+
+        Usado só na conferência de identidade antes de clicar.
+        """
+        if idx < 0 or idx >= len(colunas):
+            return ""
+        t = colunas[idx].text.strip()
+        return t.upper() if upper else t
+
+    def _avaliar_passo1(self, mod, convenio, descricao, nome, ja_desmarcado):
+        """Decide se um exame deve ser marcado no Passo 1. Não toca no navegador.
+
+        Devolve (elegivel, e_ct_cranio, motivo).
+        """
+        idade = self._extrair_idade(nome)
+        if "CT" in mod and ("CRANIO" in descricao or "CRÂNIO" in descricao) and idade is not None and idade <= 45:
+            if "UNIMED" in convenio or ja_desmarcado:
+                return False, False, ""
+            return True, True, f"CT crânio, idade {idade} <= 45"
+        if "ANGIO" in descricao:
+            return "UNIMED" not in convenio, False, f"ANGIO (Conv: {convenio or 'vazio'})"
+        if "CT" in mod and any(t in descricao for t in ("TEP", "CAROTIDA", "CARÓTIDA")):
+            return "UNIMED" not in convenio, False, f"CT especial (Conv: {convenio or 'vazio'})"
+        conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
+        if conv_ok and "CT" in mod and any(x in convenio for x in CONVENIOS_SEM_CT):
+            conv_ok = False
+        return conv_ok, False, f"Conv: {convenio}"
+
+    def _detectar_colunas(self, cabecalhos):
         cols = {"nome": -1, "data_exame": -1, "mod": -1, "convenio": -1, "acoes": -1, "realizante": -1, "descricao": -1, "laudo": -1}
-        for i, h in enumerate(headers):
-            t = h.text.strip().upper()
+        for i, h in enumerate(cabecalhos):
+            t = h.strip().upper()
             if "NOME" in t:
                 cols["nome"] = i
             elif "DATA" in t and "EXAME" in t:
@@ -756,10 +825,10 @@ class Automacao:
             return False
         return len(colunas) > max(indices)
 
-    def _txt(self, colunas, idx, upper=True):
-        if idx < 0 or idx >= len(colunas):
+    def _txt(self, celulas, idx, upper=True):
+        if idx < 0 or idx >= len(celulas):
             return ""
-        t = colunas[idx].text.strip()
+        t = celulas[idx].strip()
         return t.upper() if upper else t
 
     def _extrair_idade(self, nome):
