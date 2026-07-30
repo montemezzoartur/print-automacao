@@ -263,68 +263,6 @@ class RegraDeConvenioDX(SemNavegador):
         self.assertFalse(self.a._convenio_bate_dx("UNIMED", "ANGIO"))
 
 
-class ElementoFalso:
-    def __init__(self, sel, visivel=True, ativo=True):
-        self.sel = sel
-        self._visivel = visivel
-        self._ativo = ativo
-
-    def is_displayed(self):
-        return self._visivel
-
-    def is_enabled(self):
-        return self._ativo
-
-
-class NavegadorFalso:
-    """Só o suficiente para exercitar _encontrar_elemento sem abrir o Chrome."""
-
-    def __init__(self, casam=(), invisiveis=()):
-        self.casam = dict(casam)
-        self.invisiveis = set(invisiveis)
-        self.consultas = 0
-
-    def find_elements(self, by, sel):
-        self.consultas += 1
-        if sel not in self.casam:
-            return []
-        return [ElementoFalso(sel, visivel=sel not in self.invisiveis)]
-
-
-class OrcamentoDeTempo(SemNavegador):
-    """O defeito central da versão antiga: cada seletor gastava o tempo inteiro."""
-
-    SELETORES = [("xpath", f"s{i}") for i in range(4)]
-
-    def test_quatro_seletores_nao_gastam_quatro_vezes_o_teto(self):
-        self.a.driver = NavegadorFalso()
-        inicio = time.monotonic()
-        self.assertIsNone(self.a._encontrar_elemento(self.SELETORES, teto=0.4))
-        gasto = time.monotonic() - inicio
-        self.assertLess(gasto, 1.0,
-                        f"gastou {gasto:.1f}s — o orçamento tem que ser total, não por seletor")
-
-    def test_acha_de_primeira_sem_esperar(self):
-        self.a.driver = NavegadorFalso(casam={"s0": 1})
-        inicio = time.monotonic()
-        achado = self.a._encontrar_elemento(self.SELETORES, teto=5)
-        self.assertEqual(achado.sel, "s0")
-        self.assertLess(time.monotonic() - inicio, 0.5, "não pode esperar quando já achou")
-
-    def test_respeita_a_ordem_de_prioridade(self):
-        self.a.driver = NavegadorFalso(casam={"s1": 1, "s3": 1})
-        self.assertEqual(self.a._encontrar_elemento(self.SELETORES, teto=1).sel, "s1")
-
-    def test_clicavel_ignora_elemento_invisivel(self):
-        self.a.driver = NavegadorFalso(casam={"s0": 1, "s2": 1}, invisiveis={"s0"})
-        self.assertEqual(self.a._encontrar_elemento(self.SELETORES, clicavel=True, teto=1).sel, "s2")
-
-    def test_sem_clicavel_aceita_elemento_invisivel(self):
-        # presenca_of_element_located, o comportamento antigo, não exigia visibilidade
-        self.a.driver = NavegadorFalso(casam={"s0": 1}, invisiveis={"s0"})
-        self.assertEqual(self.a._encontrar_elemento(self.SELETORES, teto=1).sel, "s0")
-
-
 class EstadoEmDisco(SemNavegador):
     """A causa mais provável de 'fica marcado para sempre': fechar o app
     apagava a lista de exames aguardando o convênio aparecer."""
@@ -356,6 +294,41 @@ class EstadoEmDisco(SemNavegador):
         automacao.Automacao(log_callback=registros.append)
         self.assertTrue(any("Estado recuperado" in r for r in registros))
 
+    def test_nao_deixa_arquivo_temporario_para_tras(self):
+        self.a.ids_passo2.add(("MARIA 40", "01/07/2026"))
+        self.a._salvar_estado()
+        self.assertFalse(os.path.exists(automacao.ESTADO_ARQUIVO + ".tmp"))
+
+    def test_gravacao_que_falha_preserva_a_lista_anterior(self):
+        """Escrever direto no arquivo definitivo o truncaria antes de preenchê-lo:
+        uma falha nesse instante apagaria a lista — o oposto do objetivo."""
+        self.a.ids_passo2.add(("MARIA 40", "01/07/2026"))
+        self.a._salvar_estado()
+        with open(automacao.ESTADO_ARQUIVO, encoding="utf-8") as f:
+            bom = f.read()
+
+        # torna a gravação impossível: o caminho do temporário vira uma pasta
+        os.mkdir(automacao.ESTADO_ARQUIVO + ".tmp")
+        self.a.ids_passo2.add(("OUTRO 50", "02/07/2026"))
+        self.a._salvar_estado()
+
+        with open(automacao.ESTADO_ARQUIVO, encoding="utf-8") as f:
+            self.assertEqual(f.read(), bom,
+                             "uma gravação que falhou não pode destruir a lista boa")
+
+    def test_json_que_nao_e_dicionario_nao_derruba_o_app(self):
+        with open(automacao.ESTADO_ARQUIVO, "w", encoding="utf-8") as f:
+            f.write("[1, 2, 3]")
+        outro = automacao.Automacao(log_callback=lambda _: None)
+        self.assertEqual(outro.ids_passo2, set())
+
+    def test_lixo_no_arquivo_e_ignorado(self):
+        with open(automacao.ESTADO_ARQUIVO, "w", encoding="utf-8") as f:
+            f.write('{"ids_passo2": ["ab", ["MARIA 40", "01/07/2026"], [1, 2, 3]]}')
+        outro = automacao.Automacao(log_callback=lambda _: None)
+        self.assertEqual(outro.ids_passo2, {("MARIA 40", "01/07/2026")},
+                         "a string 'ab' tem tamanho 2 mas não é um par de exame")
+
 
 class AvisosDeProblema(SemNavegador):
     def test_aviso_grave_sai_uma_vez_so(self):
@@ -384,119 +357,6 @@ class AvisosDeProblema(SemNavegador):
         self.a._registrar_falha_passo3(("B", "2"), "B")
         self.a._registrar_falha_passo3(("A", "1"), "A")
         self.assertEqual(self.registros, [], "falhas de exames diferentes não se somam")
-
-
-class ExamesQueSomem(SemNavegador):
-    """Um exame cancelado ou renomeado ficava preso na lista para sempre — e,
-    com a lista agora em disco, nem fechar o app resolvia."""
-
-    CHAVE = ("MARIA 40", "01/07/2026")
-    # Literal de propósito. Se o teste tirasse esse número da própria constante,
-    # alterá-la faria o laço rodar em vazio (ou eternamente) e o teste passaria
-    # sem testar nada — foi o que já aconteceu uma vez neste arquivo.
-    LIMITE = 30
-
-    def setUp(self):
-        super().setUp()
-        self.assertEqual(automacao.AUSENCIAS_ATE_DESISTIR, self.LIMITE,
-                         "o limite mudou — atualize este teste de propósito")
-
-    def _sumir(self, vezes):
-        for _ in range(vezes):
-            self.a._cobrar_ausencias(self.a.ids_passo2, {self.CHAVE}, set())
-
-    def test_desiste_do_exame_apos_o_limite(self):
-        self.a.ids_passo2.add(self.CHAVE)
-        self._sumir(self.LIMITE - 1)
-        self.assertIn(self.CHAVE, self.a.ids_passo2, "não pode desistir cedo demais")
-
-        self._sumir(1)
-        self.assertNotIn(self.CHAVE, self.a.ids_passo2)
-        self.assertTrue(any("Desistindo após" in r for r in self.registros))
-
-    def test_reaparecer_zera_o_contador(self):
-        self.a.ids_passo2.add(self.CHAVE)
-        self._sumir(self.LIMITE - 1)
-        # o exame reaparece uma vez
-        self.a._cobrar_ausencias(self.a.ids_passo2, set(), {self.CHAVE})
-        self._sumir(self.LIMITE - 1)
-        self.assertIn(self.CHAVE, self.a.ids_passo2,
-                      "um reaparecimento tem que zerar a contagem")
-
-    def test_desistencia_e_gravada_em_disco(self):
-        self.a.ids_passo2.add(self.CHAVE)
-        self._sumir(self.LIMITE)
-        outro = automacao.Automacao(log_callback=lambda _: None)
-        self.assertNotIn(self.CHAVE, outro.ids_passo2,
-                         "senão o exame preso voltaria ao reabrir o app")
-
-    def test_devolve_quem_foi_abandonado(self):
-        self.a.ids_passo2.add(self.CHAVE)
-        for _ in range(self.LIMITE - 1):
-            self.assertEqual(self.a._cobrar_ausencias(self.a.ids_passo2, {self.CHAVE}, set()), [])
-        ultimo = self.a._cobrar_ausencias(self.a.ids_passo2, {self.CHAVE}, set())
-        self.assertEqual(ultimo, ["MARIA 40 (01/07/2026)"])
-
-
-class EsperaDaTabela(SemNavegador):
-    """O teto era código morto: a função saía sempre em 0,8s."""
-
-    def _assinaturas(self, sequencia):
-        it = iter(sequencia)
-        ultimo = [sequencia[-1]]
-
-        def ler():
-            try:
-                ultimo[0] = next(it)
-            except StopIteration:
-                pass
-            return ultimo[0]
-        self.a._assinatura_tabela = ler
-
-    def test_tabela_parada_libera_rapido(self):
-        self._assinaturas(["a"] * 100)
-        inicio = time.monotonic()
-        self.a._esperar_tabela_pronta("a", teto=3.0, estabilidade=0.3)
-        gasto = time.monotonic() - inicio
-        self.assertLess(gasto, 1.0, f"gastou {gasto:.2f}s numa tabela que nem mudou")
-
-    def test_tabela_em_mudanca_continua_respeita_o_teto(self):
-        self._assinaturas([str(i) for i in range(500)])
-        inicio = time.monotonic()
-        self.a._esperar_tabela_pronta("inicial", teto=0.8, estabilidade=0.3)
-        gasto = time.monotonic() - inicio
-        self.assertGreaterEqual(gasto, 0.7, "o teto tem que ser alcançável, não código morto")
-        self.assertLess(gasto, 1.6, "e não pode passar muito dele")
-
-    def test_espera_a_tabela_parar_antes_de_liberar(self):
-        # muda por ~0,3s e depois estabiliza
-        self._assinaturas(["a", "b", "c", "d"] + ["fim"] * 100)
-        inicio = time.monotonic()
-        self.a._esperar_tabela_pronta("a", teto=3.0, estabilidade=0.3)
-        gasto = time.monotonic() - inicio
-        self.assertGreater(gasto, 0.35,
-                           "não pode liberar na primeira mudança, no meio da renderização")
-
-
-class LimiteDeReinicios(SemNavegador):
-    LIMITE = 5  # literal de propósito, mesmo motivo de ExamesQueSomem
-
-    def setUp(self):
-        super().setUp()
-        self.assertEqual(automacao.MAX_REINICIOS, self.LIMITE,
-                         "o limite mudou — atualize este teste de propósito")
-
-    def test_para_de_reiniciar_apos_o_limite(self):
-        for _ in range(self.LIMITE):
-            self.assertTrue(self.a._pode_reiniciar("Passo 1"))
-        self.assertFalse(self.a._pode_reiniciar("Passo 1"))
-        self.assertTrue(any("instável demais" in r for r in self.registros))
-
-    def test_nova_busca_zera_o_limite(self):
-        for _ in range(self.LIMITE + 1):
-            self.a._pode_reiniciar("Passo 1")
-        self.a._reinicios = 0  # o que _clicar_buscar_exames faz a cada varredura
-        self.assertTrue(self.a._pode_reiniciar("Passo 1"))
 
 
 if __name__ == "__main__":

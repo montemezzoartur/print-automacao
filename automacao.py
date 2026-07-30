@@ -9,6 +9,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
     TimeoutException, NoSuchElementException,
     NoAlertPresentException, StaleElementReferenceException,
@@ -16,30 +17,15 @@ from selenium.common.exceptions import (
 import config
 
 
-LOG_ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "automacao.log")
-ESTADO_ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "estado.json")
+PASTA = os.path.dirname(os.path.abspath(__file__))
+LOG_ARQUIVO = os.path.join(PASTA, "automacao.log")
+ESTADO_ARQUIVO = os.path.join(PASTA, "estado.json")
 
 # Listas de espera guardadas em disco entre execuções.
 CONJUNTOS_DE_ESTADO = ("ids_passo2", "ids_passo2_ct", "ids_passo3")
 
-# Quantas buscas seguidas sem encontrar o exame antes de desistir dele.
-AUSENCIAS_ATE_DESISTIR = 30
-
-# Quantas vezes uma varredura pode se reiniciar por tabela instável antes de
-# desistir da passada. Sem isso a recursão só parava no limite do Python.
-MAX_REINICIOS = 5
-
 # Convênios que valem para DX mas não para CT.
 CONVENIOS_SEM_CT = ("SAS", "FLIP", "ARAMART", "AVICOLA", "HI-MIX")
-
-# Impressão digital da tabela: quantidade de linhas e volume de texto. Serve só
-# para detectar que a busca recarregou a tabela, sem trazer o conteúdo todo.
-JS_ASSINATURA_TABELA = """
-const linhas = document.querySelectorAll('table tbody tr');
-let n = 0;
-for (const tr of linhas) { n += tr.innerText.length; }
-return linhas.length + ':' + n;
-"""
 
 
 def _cronometrar(nome):
@@ -68,90 +54,7 @@ class Automacao:
         self._loop_lock = threading.Lock()
         self._avisos_dados = set()
         self._falhas_passo3 = {}
-        self._ausencias = {}
-        self._reinicios = 0
         self._carregar_estado()
-
-    def _carregar_estado(self):
-        """Recupera as listas de espera do disco.
-
-        Sem isso, fechar o app apagava a lista e todo exame que aguardava o
-        convênio aparecer ficava marcado com o nome do usuário para sempre.
-        """
-        try:
-            with open(ESTADO_ARQUIVO, encoding="utf-8") as f:
-                dados = json.load(f)
-        except (FileNotFoundError, ValueError, OSError):
-            return
-        for campo in CONJUNTOS_DE_ESTADO:
-            valores = dados.get(campo) or []
-            setattr(self, campo, {tuple(par) for par in valores if len(par) == 2})
-        if self.ids_passo2 or self.ids_passo2_ct:
-            self.log(f"Estado recuperado — DX em espera: {sorted(self.ids_passo2)}, "
-                     f"CT em espera: {sorted(self.ids_passo2_ct)}")
-
-    def _salvar_estado(self):
-        dados = {campo: sorted(getattr(self, campo)) for campo in CONJUNTOS_DE_ESTADO}
-        try:
-            with open(ESTADO_ARQUIVO, "w", encoding="utf-8") as f:
-                json.dump(dados, f, ensure_ascii=False, indent=1)
-        except OSError as e:
-            self.log(f"Não foi possível salvar o estado em disco: {e}")
-
-    def _avisar_uma_vez(self, chave, mensagem):
-        """Registra um aviso grave só na primeira vez, para não inundar o log."""
-        if chave in self._avisos_dados:
-            return
-        self._avisos_dados.add(chave)
-        self.log(mensagem)
-
-    def _cobrar_ausencias(self, conjunto, ausentes, vistos, marca=""):
-        """Desiste de exames que sumiram da tabela depois de muitas buscas.
-
-        Sem isso um exame cancelado, ou cujo nome a recepção corrigiu, fica preso
-        na lista para sempre. Como a lista agora vive em disco, nem fechar o app
-        resolvia: a etapa de checagem gastava seus 30 segundos inteiros em todo
-        ciclo procurando um exame que não existe mais.
-        """
-        for chave in vistos:
-            self._ausencias.pop(chave, None)
-
-        desistidos = []
-        for chave in ausentes:
-            n = self._ausencias.get(chave, 0) + 1
-            self._ausencias[chave] = n
-            if n >= AUSENCIAS_ATE_DESISTIR:
-                conjunto.discard(chave)
-                self._ausencias.pop(chave, None)
-                self._falhas_passo3.pop(chave, None)
-                desistidos.append(f"{chave[0]} ({chave[1]})")
-
-        if desistidos:
-            self.log(f"  {marca}Desistindo após {AUSENCIAS_ATE_DESISTIR} buscas sem "
-                     f"aparecer na tabela: {desistidos}")
-            self._salvar_estado()
-        elif ausentes:
-            self.log(f"  {marca}Exames em espera não encontrados na tabela: {sorted(ausentes)}")
-        return desistidos
-
-    def _pode_reiniciar(self, etapa):
-        """Limita os reinícios por tabela instável, antes uma recursão sem fim."""
-        self._reinicios += 1
-        if self._reinicios > MAX_REINICIOS:
-            self.log(f"  Tabela instável demais em {etapa} — desistindo desta passada.")
-            return False
-        return True
-
-    def _registrar_falha_passo3(self, chave, rotulo):
-        """Conta falhas seguidas de desmarcação no mesmo exame.
-
-        Um exame que falha sempre é exatamente o que "fica marcado para sempre".
-        """
-        n = self._falhas_passo3.get(chave, 0) + 1
-        self._falhas_passo3[chave] = n
-        if n >= 3:
-            self.log(f"  ATENÇÃO: desmarcação falhou {n}x seguidas em '{rotulo}'. "
-                     f"Esse exame continua com o realizante preenchido.")
 
     def log(self, msg, so_arquivo=False):
         agora = datetime.now()
@@ -163,6 +66,81 @@ class Automacao:
                 f.write(f"{agora:%Y-%m-%d} {linha}\n")
         except Exception:
             pass
+
+    def _carregar_estado(self):
+        """Recupera as listas de espera do disco.
+
+        Sem isso, fechar o app apagava a lista e todo exame que aguardava o
+        convênio aparecer ficava com o nome do usuário para sempre.
+        """
+        try:
+            with open(ESTADO_ARQUIVO, encoding="utf-8") as f:
+                dados = json.load(f)
+        except (FileNotFoundError, ValueError, OSError):
+            return
+        if not isinstance(dados, dict):
+            self.log("estado.json com formato inesperado — começando com as listas vazias.")
+            return
+        for campo in CONJUNTOS_DE_ESTADO:
+            valores = dados.get(campo) or []
+            setattr(self, campo, {tuple(par) for par in valores
+                                  if isinstance(par, list) and len(par) == 2})
+        if self.ids_passo2 or self.ids_passo2_ct:
+            self.log(f"Estado recuperado — DX em espera: {sorted(self.ids_passo2)}, "
+                     f"CT em espera: {sorted(self.ids_passo2_ct)}")
+
+    def _salvar_estado(self):
+        """Grava num arquivo temporário e só então substitui o definitivo.
+
+        Escrever direto no estado.json truncaria o arquivo antes de preenchê-lo:
+        uma interrupção no meio deixaria a lista de espera pela metade, que é
+        justamente o que este arquivo existe para evitar.
+        """
+        dados = {campo: sorted(getattr(self, campo)) for campo in CONJUNTOS_DE_ESTADO}
+        temporario = ESTADO_ARQUIVO + ".tmp"
+        try:
+            with open(temporario, "w", encoding="utf-8") as f:
+                json.dump(dados, f, ensure_ascii=False, indent=1)
+            os.replace(temporario, ESTADO_ARQUIVO)
+        except OSError as e:
+            self.log(f"Não foi possível salvar o estado em disco: {e}")
+
+    def _avisar_uma_vez(self, chave, mensagem):
+        """Registra um aviso grave só na primeira vez, para não inundar o log."""
+        if chave in self._avisos_dados:
+            return
+        self._avisos_dados.add(chave)
+        self.log(mensagem)
+
+    def _registrar_falha_passo3(self, chave, rotulo):
+        """Conta falhas seguidas de desmarcação no mesmo exame.
+
+        Um exame que falha sempre é exatamente o que 'fica marcado para sempre'.
+        """
+        n = self._falhas_passo3.get(chave, 0) + 1
+        self._falhas_passo3[chave] = n
+        if n >= 3:
+            self.log(f"  ATENÇÃO: desmarcação falhou {n}x seguidas em '{rotulo}'. "
+                     f"Esse exame continua com o realizante preenchido.")
+
+    def _avaliar_passo1(self, mod, convenio, descricao, nome, ja_desmarcado):
+        """Decide se um exame deve ser marcado no Passo 1. Não toca no navegador.
+
+        Devolve (elegivel, e_ct_cranio, motivo).
+        """
+        idade = self._extrair_idade(nome)
+        if "CT" in mod and ("CRANIO" in descricao or "CRÂNIO" in descricao) and idade is not None and idade <= 45:
+            if "UNIMED" in convenio or ja_desmarcado:
+                return False, False, ""
+            return True, True, f"CT crânio, idade {idade} <= 45"
+        if "ANGIO" in descricao:
+            return "UNIMED" not in convenio, False, f"ANGIO (Conv: {convenio or 'vazio'})"
+        if "CT" in mod and any(t in descricao for t in ("TEP", "CAROTIDA", "CARÓTIDA")):
+            return "UNIMED" not in convenio, False, f"CT especial (Conv: {convenio or 'vazio'})"
+        conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
+        if conv_ok and "CT" in mod and any(x in convenio for x in CONVENIOS_SEM_CT):
+            conv_ok = False
+        return conv_ok, False, f"Conv: {convenio}"
 
     def iniciar(self, modo="AMBOS"):
         # Sinaliza qualquer loop anterior para parar e espera ele encerrar
@@ -206,20 +184,22 @@ class Automacao:
 
     def _fazer_login(self):
         self.log("Realizando login automático...")
-        campo_usuario = self._encontrar_elemento([
+        wait = WebDriverWait(self.driver, 20)
+
+        campo_usuario = self._encontrar_elemento(wait, [
             (By.XPATH, "//input[@placeholder='Usuário' or @placeholder='Usuario']"),
             (By.XPATH, "//input[@name='usuario' or @name='username' or @name='user']"),
             (By.XPATH, "//input[@id='usuario' or @id='username' or @id='user']"),
             (By.XPATH, "//input[@type='text']"),
-        ], teto=20)
+        ])
         if not campo_usuario:
             raise Exception("Campo de usuário não encontrado na tela de login.")
 
-        campo_senha = self._encontrar_elemento([
+        campo_senha = self._encontrar_elemento(wait, [
             (By.XPATH, "//input[@type='password']"),
             (By.XPATH, "//input[@placeholder='Senha']"),
             (By.XPATH, "//input[@name='senha' or @name='password']"),
-        ], teto=20)
+        ])
         if not campo_senha:
             raise Exception("Campo de senha não encontrado na tela de login.")
 
@@ -228,12 +208,12 @@ class Automacao:
         campo_senha.clear()
         campo_senha.send_keys(config.SENHA)
 
-        botao = self._encontrar_elemento([
+        botao = self._encontrar_elemento(wait, [
             (By.XPATH, "//button[contains(normalize-space(.),'Acessar sua conta')]"),
             (By.XPATH, "//button[contains(normalize-space(.),'Acessar')]"),
             (By.XPATH, "//button[@type='submit']"),
             (By.XPATH, "//input[@type='submit']"),
-        ], clicavel=True, teto=20)
+        ], clicavel=True)
         if not botao:
             raise Exception("Botão 'Acessar sua conta' não encontrado.")
 
@@ -308,8 +288,7 @@ class Automacao:
             self.log(f"  Reconciliação concluída — {acoes} exame(s) regularizado(s).")
 
     def _reconciliar_uma_acao(self):
-        cabecalhos = self._ler_cabecalhos()
-        cols = self._detectar_colunas(cabecalhos)
+        cols = self._detectar_colunas(self._ler_cabecalhos())
         if cols is None:
             return False
         for coluna in ("realizante", "laudo"):
@@ -318,8 +297,7 @@ class Automacao:
                     f"coluna_{coluna}",
                     f"PROBLEMA GRAVE: coluna '{coluna}' não encontrada na tabela. "
                     f"A reconciliação inteira não roda, então exames marcados em "
-                    f"sessões anteriores NUNCA serão desmarcados. "
-                    f"Cabeçalhos lidos: {cabecalhos}")
+                    f"sessões anteriores NUNCA serão desmarcados.")
                 return False
 
         linhas = self._linhas_seguras()
@@ -373,8 +351,6 @@ class Automacao:
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante reconciliação — reiniciando.")
-                if not self._pode_reiniciar("reconciliação"):
-                    return False
                 return self._reconciliar_uma_acao()
             except Exception as e:
                 self.log(f"  Erro reconciliação linha {i+1}: {e}")
@@ -433,13 +409,8 @@ class Automacao:
                 self.log("  Sem exames em espera — encerrando checagem antecipadamente.")
                 break
             if not agiu and not removidos:
-                # Antes a checagem desistia aqui, na primeira passada sem ação.
-                # Só que o convênio costuma aparecer alguns segundos depois da
-                # marcação: desistir empurrava a desmarcação para o ciclo
-                # seguinte, uns 90 segundos depois. Agora insiste dentro do
-                # orçamento, que é barato desde que a leitura virou uma
-                # chamada só.
-                self._aguardar_ate(min(time.time() + 2, fim))
+                self.log("  Nenhum exame cumpre critérios — encerrando checagem antecipadamente.")
+                break
 
     # ---------- PASSO 1 ----------
 
@@ -449,6 +420,7 @@ class Automacao:
                 return
             if not self._executar_passo1_uma_acao():
                 return
+            time.sleep(1)
 
     def _executar_passo1_uma_acao(self):
         cols = self._detectar_colunas(self._ler_cabecalhos())
@@ -479,7 +451,8 @@ class Automacao:
                 nome = self._txt(colunas, cols["nome"], upper=False)
                 data_exame = self._txt(colunas, cols["data_exame"], upper=False)
 
-                if not any(m in mod for m in mods_filtro):
+                mod_ok = any(m in mod for m in mods_filtro)
+                if not mod_ok:
                     continue
 
                 ja_desmarcado = bool(nome or data_exame) and (nome, data_exame) in self.ids_passo3
@@ -493,10 +466,7 @@ class Automacao:
                     continue
 
                 self.log(f"[Passo 1] {nome} ({data_exame}) — Mod {mod} | {motivo}")
-                if not self._clicar_icone_l(linha, colunas, cols["acoes"]):
-                    # Sem encerrar aqui, o laço tentaria a mesma linha sem parar
-                    # até o prazo acabar, martelando o servidor do PACS.
-                    return False
+                self._clicar_icone_l(linha, colunas, cols["acoes"])
                 if ct_cranio and (nome or data_exame):
                     self.ids_passo2_ct.add((nome, data_exame))
                     self._salvar_estado()
@@ -505,8 +475,6 @@ class Automacao:
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante Passo 1 — reiniciando.")
-                if not self._pode_reiniciar("Passo 1"):
-                    return False
                 return self._executar_passo1_uma_acao()
             except Exception as e:
                 self.log(f"  Erro Passo 1 linha {i+1}: {e}")
@@ -522,6 +490,7 @@ class Automacao:
                 return
             if not self._executar_passo2_uma_acao():
                 return
+            time.sleep(1)
 
     def _executar_passo2_uma_acao(self):
         cols = self._detectar_colunas(self._ler_cabecalhos())
@@ -553,15 +522,9 @@ class Automacao:
                     continue
                 if (nome or data_exame) and chave in self.ids_passo3:
                     continue
-                if (nome or data_exame) and chave in self.ids_passo2:
-                    # Já marcamos este exame e ainda estamos esperando o convênio.
-                    # Sem esta guarda, uma tabela ainda não atualizada faria o app
-                    # clicar no "L" do mesmo exame repetidamente.
-                    continue
 
                 self.log(f"[Passo 2] '{nome} ({data_exame})' — Mod {mod} (Conv. e Realizante vazios)")
-                if not self._clicar_icone_l(linha, colunas, cols["acoes"]):
-                    return False
+                self._clicar_icone_l(linha, colunas, cols["acoes"])
                 if nome or data_exame:
                     self.ids_passo2.add(chave)
                     self._salvar_estado()
@@ -572,8 +535,6 @@ class Automacao:
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante Passo 2 — reiniciando.")
-                if not self._pode_reiniciar("Passo 2"):
-                    return False
                 return self._executar_passo2_uma_acao()
             except Exception as e:
                 self.log(f"  Erro Passo 2 linha {i+1}: {e}")
@@ -614,6 +575,7 @@ class Automacao:
                 ids_vistos.add(chave)
                 rotulo = f"{nome} ({data_exame})"
 
+                mod = self._txt(colunas, cols["mod"])
                 convenio = self._txt(colunas, cols["convenio"])
                 descricao = self._txt(colunas, cols["descricao"])
 
@@ -642,14 +604,14 @@ class Automacao:
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante checagem — reiniciando.")
-                if not self._pode_reiniciar("checagem"):
-                    return False, removidos
                 return self._checar_ids_aguardando()
             except Exception as e:
                 self.log(f"  Erro checagem linha {i+1}: {e}")
                 continue
 
-        removidos += self._cobrar_ausencias(self.ids_passo2, ids_alvo - ids_vistos, ids_vistos)
+        nao_encontrados = ids_alvo - ids_vistos
+        if nao_encontrados:
+            self.log(f"  Exames em espera não encontrados na tabela: {sorted(nao_encontrados)}")
         return False, removidos
 
     def _checar_ct_aguardando(self):
@@ -710,15 +672,14 @@ class Automacao:
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante checagem CT — reiniciando.")
-                if not self._pode_reiniciar("checagem CT"):
-                    return False, removidos
                 return self._checar_ct_aguardando()
             except Exception as e:
                 self.log(f"  Erro checagem CT linha {i+1}: {e}")
                 continue
 
-        removidos += self._cobrar_ausencias(
-            self.ids_passo2_ct, ids_alvo - ids_vistos, ids_vistos, "[CT] ")
+        nao_encontrados = ids_alvo - ids_vistos
+        if nao_encontrados:
+            self.log(f"  [CT] Exames em espera não encontrados na tabela: {sorted(nao_encontrados)}")
         return False, removidos
 
     def _convenio_bate_dx(self, convenio, descricao):
@@ -751,17 +712,22 @@ class Automacao:
                 alvo_clique = celula
 
             self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", alvo_clique)
+            time.sleep(0.3)
             self.driver.execute_script("arguments[0].click();", alvo_clique)
 
-            # Orçamento total de 3s. Antes eram 4 seletores de 8s cada: se o
-            # modal não abrisse, uma única tentativa gastava até 32 segundos —
-            # mais que os 30s de toda a etapa de checagem.
-            modal = self._encontrar_elemento([
-                (By.XPATH, "//div[contains(@class,'modal') and (contains(.,'Editar realizante') or contains(.,'realizante'))]"),
-                (By.XPATH, "//div[contains(@class,'modal-content')]"),
-                (By.XPATH, "//div[@role='dialog']"),
-                (By.XPATH, "//div[contains(@class,'modal')]"),
-            ], clicavel=True, teto=3)
+            wait = WebDriverWait(self.driver, 8)
+            modal = None
+            for sel in [
+                "//div[contains(@class,'modal') and (contains(.,'Editar realizante') or contains(.,'realizante'))]",
+                "//div[contains(@class,'modal-content')]",
+                "//div[@role='dialog']",
+                "//div[contains(@class,'modal')]",
+            ]:
+                try:
+                    modal = wait.until(EC.visibility_of_element_located((By.XPATH, sel)))
+                    break
+                except TimeoutException:
+                    continue
 
             if modal is None:
                 self.log("  Popup 'Editar realizante' não apareceu.")
@@ -825,30 +791,10 @@ class Automacao:
     def _ler_cabecalhos(self):
         """Lê o texto dos cabeçalhos da tabela.
 
-        Usa o .text do Selenium de propósito: ele devolve vazio para tabelas
-        ocultas na página (templates, modais), enquanto o innerText do
-        JavaScript devolveria o texto delas e bagunçaria os índices das colunas.
+        Separado de _detectar_colunas para que a detecção das colunas seja uma
+        função pura, testável sem abrir o navegador.
         """
         return [h.text.strip() for h in self.driver.find_elements(By.XPATH, "//table//th")]
-
-    def _avaliar_passo1(self, mod, convenio, descricao, nome, ja_desmarcado):
-        """Decide se um exame deve ser marcado no Passo 1. Não toca no navegador.
-
-        Devolve (elegivel, e_ct_cranio, motivo).
-        """
-        idade = self._extrair_idade(nome)
-        if "CT" in mod and ("CRANIO" in descricao or "CRÂNIO" in descricao) and idade is not None and idade <= 45:
-            if "UNIMED" in convenio or ja_desmarcado:
-                return False, False, ""
-            return True, True, f"CT crânio, idade {idade} <= 45"
-        if "ANGIO" in descricao:
-            return "UNIMED" not in convenio, False, f"ANGIO (Conv: {convenio or 'vazio'})"
-        if "CT" in mod and any(t in descricao for t in ("TEP", "CAROTIDA", "CARÓTIDA")):
-            return "UNIMED" not in convenio, False, f"CT especial (Conv: {convenio or 'vazio'})"
-        conv_ok = any(c.upper() in convenio for c in config.CONVENIOS_ALVO)
-        if conv_ok and "CT" in mod and any(x in convenio for x in CONVENIOS_SEM_CT):
-            conv_ok = False
-        return conv_ok, False, f"Conv: {convenio}"
 
     def _detectar_colunas(self, cabecalhos):
         cols = {"nome": -1, "data_exame": -1, "mod": -1, "convenio": -1, "acoes": -1, "realizante": -1, "descricao": -1, "laudo": -1}
@@ -909,25 +855,22 @@ class Automacao:
 
     @_cronometrar("buscar_exames")
     def _clicar_buscar_exames(self):
-        # Toda varredura começa por aqui, e a recursão de tabela instável não
-        # passa por este ponto — então é o lugar certo para zerar o contador.
-        self._reinicios = 0
-        botao = self._encontrar_elemento([
+        wait = WebDriverWait(self.driver, 10)
+        botao = self._encontrar_elemento(wait, [
             (By.XPATH, "//button[contains(translate(.,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
             (By.XPATH, "//a[contains(translate(.,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
             (By.XPATH, "//*[contains(@id,'buscar') or contains(@name,'buscar')]"),
-        ], clicavel=True, teto=5)
+        ], clicavel=True)
 
         if not botao:
             self.log("Botão 'Buscar Exames' não encontrado.")
             return False
 
-        antes = self._assinatura_tabela()
         try:
             botao.click()
         except Exception:
             self.driver.execute_script("arguments[0].click();", botao)
-        self._esperar_tabela_pronta(antes)
+        time.sleep(2)
         return True
 
     @_cronometrar("clicar_L_marcar")
@@ -952,15 +895,18 @@ class Automacao:
 
             if not icone:
                 self.log("Ícone 'L' não encontrado nesta linha.")
-                return False
+                return
 
             janelas_antes = set(self.driver.window_handles)
             self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", icone)
+            time.sleep(0.3)
             self.driver.execute_script("arguments[0].click();", icone)
+            time.sleep(1)
 
             self._confirmar_popup()
+            time.sleep(1)
 
-            novas = self._esperar_nova_janela(janelas_antes)
+            novas = set(self.driver.window_handles) - janelas_antes
             for janela in novas:
                 self.driver.switch_to.window(janela)
                 self.driver.close()
@@ -968,11 +914,9 @@ class Automacao:
 
             self.driver.switch_to.window(list(janelas_antes)[0])
             self.log("  Ação L concluída.")
-            return True
 
         except Exception as e:
             self.log(f"Erro ao processar ícone L: {e}")
-            return False
 
     def _confirmar_popup(self):
         try:
@@ -983,77 +927,28 @@ class Automacao:
         except NoAlertPresentException:
             pass
 
-        # Orçamento total de 1,5s. Antes eram 4 seletores de 5s cada: se o popup
-        # não aparecesse, eram 20 segundos parados em cada marcação.
-        btn = self._encontrar_elemento([
+        wait = WebDriverWait(self.driver, 5)
+        for by, sel in [
             (By.XPATH, "//button[normalize-space(text())='Sim']"),
             (By.XPATH, "//button[contains(text(),'Sim')]"),
             (By.XPATH, "//a[normalize-space(text())='Sim']"),
             (By.XPATH, "//input[@value='Sim']"),
-        ], clicavel=True, teto=1.5)
-
-        if btn:
-            btn.click()
-            self.log("  Popup confirmado com 'Sim'.")
-            return
+        ]:
+            try:
+                btn = wait.until(EC.element_to_be_clickable((by, sel)))
+                btn.click()
+                self.log("  Popup confirmado com 'Sim'.")
+                return
+            except TimeoutException:
+                continue
 
         self.log("  Popup não encontrado (pode ter fechado sozinho).")
 
-    def _encontrar_elemento(self, seletores, clicavel=False, teto=5):
-        """Procura o primeiro seletor que casar, com orçamento de tempo TOTAL.
-
-        Antes cada seletor tinha seu próprio tempo limite: uma lista de 4
-        seletores de 5s podia gastar 20 segundos antes de desistir. Agora os
-        seletores são varridos em ciclo rápido dentro de um único orçamento,
-        preservando a ordem de prioridade.
-        """
-        fim = time.time() + teto
-        while True:
-            for by, sel in seletores:
-                for e in self.driver.find_elements(by, sel):
-                    try:
-                        if not clicavel:
-                            return e
-                        if e.is_displayed() and e.is_enabled():
-                            return e
-                    except StaleElementReferenceException:
-                        continue
-            if time.time() >= fim:
-                return None
-            time.sleep(0.1)
-
-    def _assinatura_tabela(self):
-        """Impressão digital barata da tabela, para saber quando ela recarregou."""
-        try:
-            return self.driver.execute_script(JS_ASSINATURA_TABELA)
-        except Exception:
-            return None
-
-    def _esperar_tabela_pronta(self, antes, teto=2.0, estabilidade=0.4):
-        """Espera a tabela terminar de recarregar após o clique em Buscar Exames.
-
-        Substitui um sleep(2) fixo. Acompanha a impressão digital da tabela e só
-        libera quando ela fica PARADA por `estabilidade` segundos — assim não se
-        lê uma tabela no meio da renderização. O `teto` limita a espera total.
-        """
-        fim = time.time() + teto
-        ultima = antes
-        parada_desde = time.time()
-        while time.time() < fim:
-            time.sleep(0.1)
-            agora = self._assinatura_tabela()
-            if agora != ultima:
-                ultima = agora
-                parada_desde = time.time()
-            elif time.time() - parada_desde >= estabilidade:
-                return
-
-    def _esperar_nova_janela(self, janelas_antes, teto=1.0):
-        """Espera a aba extra abrir depois do clique no 'L'. Antes era sleep(1) fixo."""
-        fim = time.time() + teto
-        while time.time() < fim:
-            novas = set(self.driver.window_handles) - janelas_antes
-            if novas:
-                return novas
-            time.sleep(0.05)
-        return set()
+    def _encontrar_elemento(self, wait, seletores, clicavel=False):
+        for by, sel in seletores:
+            try:
+                cond = EC.element_to_be_clickable if clicavel else EC.presence_of_element_located
+                return wait.until(cond((by, sel)))
+            except TimeoutException:
+                continue
+        return None
