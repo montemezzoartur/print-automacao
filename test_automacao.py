@@ -89,6 +89,13 @@ CABECALHOS = ["Nome do paciente", "Data do exame", "Mod.", "Convênio",
               "Descrição", "Realizante", "Laudo", "Ações"]
 
 
+class Celula:
+    """Uma <td> do Selenium, do jeito que _txt espera receber."""
+
+    def __init__(self, texto):
+        self.text = texto
+
+
 class SemNavegador(unittest.TestCase):
     """Base para testar a lógica pura, que não abre o Chrome."""
 
@@ -132,10 +139,10 @@ class DetectarColunas(SemNavegador):
 
 class LeituraDeCelulas(SemNavegador):
     def test_texto_normal_vem_em_maiuscula(self):
-        self.assertEqual(self.a._txt(["joão silva"], 0), "JOÃO SILVA")
+        self.assertEqual(self.a._txt([Celula("joão silva")], 0), "JOÃO SILVA")
 
     def test_upper_false_preserva(self):
-        self.assertEqual(self.a._txt(["joão silva"], 0, upper=False), "joão silva")
+        self.assertEqual(self.a._txt([Celula("joão silva")], 0, upper=False), "joão silva")
 
     def test_indice_fora_da_linha_devolve_vazio(self):
         self.assertEqual(self.a._txt(["a", "b"], 5), "")
@@ -377,6 +384,119 @@ class AvisosDeProblema(SemNavegador):
         self.a._registrar_falha_passo3(("B", "2"), "B")
         self.a._registrar_falha_passo3(("A", "1"), "A")
         self.assertEqual(self.registros, [], "falhas de exames diferentes não se somam")
+
+
+class ExamesQueSomem(SemNavegador):
+    """Um exame cancelado ou renomeado ficava preso na lista para sempre — e,
+    com a lista agora em disco, nem fechar o app resolvia."""
+
+    CHAVE = ("MARIA 40", "01/07/2026")
+    # Literal de propósito. Se o teste tirasse esse número da própria constante,
+    # alterá-la faria o laço rodar em vazio (ou eternamente) e o teste passaria
+    # sem testar nada — foi o que já aconteceu uma vez neste arquivo.
+    LIMITE = 30
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(automacao.AUSENCIAS_ATE_DESISTIR, self.LIMITE,
+                         "o limite mudou — atualize este teste de propósito")
+
+    def _sumir(self, vezes):
+        for _ in range(vezes):
+            self.a._cobrar_ausencias(self.a.ids_passo2, {self.CHAVE}, set())
+
+    def test_desiste_do_exame_apos_o_limite(self):
+        self.a.ids_passo2.add(self.CHAVE)
+        self._sumir(self.LIMITE - 1)
+        self.assertIn(self.CHAVE, self.a.ids_passo2, "não pode desistir cedo demais")
+
+        self._sumir(1)
+        self.assertNotIn(self.CHAVE, self.a.ids_passo2)
+        self.assertTrue(any("Desistindo após" in r for r in self.registros))
+
+    def test_reaparecer_zera_o_contador(self):
+        self.a.ids_passo2.add(self.CHAVE)
+        self._sumir(self.LIMITE - 1)
+        # o exame reaparece uma vez
+        self.a._cobrar_ausencias(self.a.ids_passo2, set(), {self.CHAVE})
+        self._sumir(self.LIMITE - 1)
+        self.assertIn(self.CHAVE, self.a.ids_passo2,
+                      "um reaparecimento tem que zerar a contagem")
+
+    def test_desistencia_e_gravada_em_disco(self):
+        self.a.ids_passo2.add(self.CHAVE)
+        self._sumir(self.LIMITE)
+        outro = automacao.Automacao(log_callback=lambda _: None)
+        self.assertNotIn(self.CHAVE, outro.ids_passo2,
+                         "senão o exame preso voltaria ao reabrir o app")
+
+    def test_devolve_quem_foi_abandonado(self):
+        self.a.ids_passo2.add(self.CHAVE)
+        for _ in range(self.LIMITE - 1):
+            self.assertEqual(self.a._cobrar_ausencias(self.a.ids_passo2, {self.CHAVE}, set()), [])
+        ultimo = self.a._cobrar_ausencias(self.a.ids_passo2, {self.CHAVE}, set())
+        self.assertEqual(ultimo, ["MARIA 40 (01/07/2026)"])
+
+
+class EsperaDaTabela(SemNavegador):
+    """O teto era código morto: a função saía sempre em 0,8s."""
+
+    def _assinaturas(self, sequencia):
+        it = iter(sequencia)
+        ultimo = [sequencia[-1]]
+
+        def ler():
+            try:
+                ultimo[0] = next(it)
+            except StopIteration:
+                pass
+            return ultimo[0]
+        self.a._assinatura_tabela = ler
+
+    def test_tabela_parada_libera_rapido(self):
+        self._assinaturas(["a"] * 100)
+        inicio = time.monotonic()
+        self.a._esperar_tabela_pronta("a", teto=3.0, estabilidade=0.3)
+        gasto = time.monotonic() - inicio
+        self.assertLess(gasto, 1.0, f"gastou {gasto:.2f}s numa tabela que nem mudou")
+
+    def test_tabela_em_mudanca_continua_respeita_o_teto(self):
+        self._assinaturas([str(i) for i in range(500)])
+        inicio = time.monotonic()
+        self.a._esperar_tabela_pronta("inicial", teto=0.8, estabilidade=0.3)
+        gasto = time.monotonic() - inicio
+        self.assertGreaterEqual(gasto, 0.7, "o teto tem que ser alcançável, não código morto")
+        self.assertLess(gasto, 1.6, "e não pode passar muito dele")
+
+    def test_espera_a_tabela_parar_antes_de_liberar(self):
+        # muda por ~0,3s e depois estabiliza
+        self._assinaturas(["a", "b", "c", "d"] + ["fim"] * 100)
+        inicio = time.monotonic()
+        self.a._esperar_tabela_pronta("a", teto=3.0, estabilidade=0.3)
+        gasto = time.monotonic() - inicio
+        self.assertGreater(gasto, 0.35,
+                           "não pode liberar na primeira mudança, no meio da renderização")
+
+
+class LimiteDeReinicios(SemNavegador):
+    LIMITE = 5  # literal de propósito, mesmo motivo de ExamesQueSomem
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(automacao.MAX_REINICIOS, self.LIMITE,
+                         "o limite mudou — atualize este teste de propósito")
+
+    def test_para_de_reiniciar_apos_o_limite(self):
+        for _ in range(self.LIMITE):
+            self.assertTrue(self.a._pode_reiniciar("Passo 1"))
+        self.assertFalse(self.a._pode_reiniciar("Passo 1"))
+        self.assertTrue(any("instável demais" in r for r in self.registros))
+
+    def test_nova_busca_zera_o_limite(self):
+        for _ in range(self.LIMITE + 1):
+            self.a._pode_reiniciar("Passo 1")
+        self.a._reinicios = 0  # o que _clicar_buscar_exames faz a cada varredura
+        self.assertTrue(self.a._pode_reiniciar("Passo 1"))
 
 
 if __name__ == "__main__":

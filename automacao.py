@@ -22,18 +22,15 @@ ESTADO_ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "estad
 # Listas de espera guardadas em disco entre execuções.
 CONJUNTOS_DE_ESTADO = ("ids_passo2", "ids_passo2_ct", "ids_passo3")
 
+# Quantas buscas seguidas sem encontrar o exame antes de desistir dele.
+AUSENCIAS_ATE_DESISTIR = 30
+
+# Quantas vezes uma varredura pode se reiniciar por tabela instável antes de
+# desistir da passada. Sem isso a recursão só parava no limite do Python.
+MAX_REINICIOS = 5
+
 # Convênios que valem para DX mas não para CT.
 CONVENIOS_SEM_CT = ("SAS", "FLIP", "ARAMART", "AVICOLA", "HI-MIX")
-
-# Lê a tabela toda de uma vez. Os seletores espelham exatamente os XPaths que o
-# código usava antes: //table//th e //table//tbody//tr, na mesma ordem.
-JS_LER_TABELA = """
-const cab = Array.from(document.querySelectorAll('table th'), h => h.innerText.trim());
-const linhas = Array.from(document.querySelectorAll('table tbody tr'),
-    tr => Array.from(tr.querySelectorAll('td'), td => td.innerText.trim()));
-if (cab.length === 0 && linhas.length === 0) { return null; }
-return {cabecalhos: cab, linhas: linhas};
-"""
 
 # Impressão digital da tabela: quantidade de linhas e volume de texto. Serve só
 # para detectar que a busca recarregou a tabela, sem trazer o conteúdo todo.
@@ -71,6 +68,8 @@ class Automacao:
         self._loop_lock = threading.Lock()
         self._avisos_dados = set()
         self._falhas_passo3 = {}
+        self._ausencias = {}
+        self._reinicios = 0
         self._carregar_estado()
 
     def _carregar_estado(self):
@@ -105,6 +104,43 @@ class Automacao:
             return
         self._avisos_dados.add(chave)
         self.log(mensagem)
+
+    def _cobrar_ausencias(self, conjunto, ausentes, vistos, marca=""):
+        """Desiste de exames que sumiram da tabela depois de muitas buscas.
+
+        Sem isso um exame cancelado, ou cujo nome a recepção corrigiu, fica preso
+        na lista para sempre. Como a lista agora vive em disco, nem fechar o app
+        resolvia: a etapa de checagem gastava seus 30 segundos inteiros em todo
+        ciclo procurando um exame que não existe mais.
+        """
+        for chave in vistos:
+            self._ausencias.pop(chave, None)
+
+        desistidos = []
+        for chave in ausentes:
+            n = self._ausencias.get(chave, 0) + 1
+            self._ausencias[chave] = n
+            if n >= AUSENCIAS_ATE_DESISTIR:
+                conjunto.discard(chave)
+                self._ausencias.pop(chave, None)
+                self._falhas_passo3.pop(chave, None)
+                desistidos.append(f"{chave[0]} ({chave[1]})")
+
+        if desistidos:
+            self.log(f"  {marca}Desistindo após {AUSENCIAS_ATE_DESISTIR} buscas sem "
+                     f"aparecer na tabela: {desistidos}")
+            self._salvar_estado()
+        elif ausentes:
+            self.log(f"  {marca}Exames em espera não encontrados na tabela: {sorted(ausentes)}")
+        return desistidos
+
+    def _pode_reiniciar(self, etapa):
+        """Limita os reinícios por tabela instável, antes uma recursão sem fim."""
+        self._reinicios += 1
+        if self._reinicios > MAX_REINICIOS:
+            self.log(f"  Tabela instável demais em {etapa} — desistindo desta passada.")
+            return False
+        return True
 
     def _registrar_falha_passo3(self, chave, rotulo):
         """Conta falhas seguidas de desmarcação no mesmo exame.
@@ -272,11 +308,7 @@ class Automacao:
             self.log(f"  Reconciliação concluída — {acoes} exame(s) regularizado(s).")
 
     def _reconciliar_uma_acao(self):
-        tabela = self._ler_tabela()
-        if tabela is None:
-            return False
-        cabecalhos, linhas = tabela
-
+        cabecalhos = self._ler_cabecalhos()
         cols = self._detectar_colunas(cabecalhos)
         if cols is None:
             return False
@@ -290,41 +322,42 @@ class Automacao:
                     f"Cabeçalhos lidos: {cabecalhos}")
                 return False
 
+        linhas = self._linhas_seguras()
+        if linhas is None:
+            return False
+
         alvo_realizante = config.REALIZANTE_NOME.upper()
 
-        for i, celulas in enumerate(linhas):
+        for i, linha in enumerate(linhas):
             try:
-                if not self._cols_validas(celulas, cols):
+                colunas = linha.find_elements(By.TAG_NAME, "td")
+                if not self._cols_validas(colunas, cols):
                     continue
 
-                mod = self._txt(celulas, cols["mod"])
+                mod = self._txt(colunas, cols["mod"])
                 if "DX" not in mod:
                     continue
 
-                realizante = self._txt(celulas, cols["realizante"])
+                realizante = self._txt(colunas, cols["realizante"])
                 if alvo_realizante not in realizante:
                     continue
 
-                convenio = self._txt(celulas, cols["convenio"])
+                convenio = self._txt(colunas, cols["convenio"])
                 if not convenio.strip():
                     continue
 
-                descricao = self._txt(celulas, cols["descricao"])
+                descricao = self._txt(colunas, cols["descricao"])
                 if self._convenio_bate_dx(convenio, descricao):
                     continue
 
-                nome = self._txt(celulas, cols["nome"], upper=False)
-                data_exame = self._txt(celulas, cols["data_exame"], upper=False)
+                nome = self._txt(colunas, cols["nome"], upper=False)
+                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
                 rotulo = f"{nome} ({data_exame})"
 
-                laudo = self._txt(celulas, cols["laudo"], upper=False)
+                laudo = self._txt(colunas, cols["laudo"], upper=False)
                 if laudo.strip():
                     self.log(f"[Reconciliação] '{rotulo}' — Laudo preenchido ('{laudo}'). Ignorado.")
                     continue
-
-                linha, colunas = self._elementos_da_linha(i, (nome, data_exame), cols)
-                if linha is None:
-                    return False
 
                 self.log(f"[Reconciliação] '{rotulo}' — Conv='{convenio}' NÃO bate parâmetros DX. Removendo realizante órfão.")
                 ok = self._executar_passo3(linha, colunas, cols)
@@ -340,6 +373,8 @@ class Automacao:
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante reconciliação — reiniciando.")
+                if not self._pode_reiniciar("reconciliação"):
+                    return False
                 return self._reconciliar_uma_acao()
             except Exception as e:
                 self.log(f"  Erro reconciliação linha {i+1}: {e}")
@@ -416,13 +451,12 @@ class Automacao:
                 return
 
     def _executar_passo1_uma_acao(self):
-        tabela = self._ler_tabela()
-        if tabela is None:
-            return False
-        cabecalhos, linhas = tabela
-
-        cols = self._detectar_colunas(cabecalhos)
+        cols = self._detectar_colunas(self._ler_cabecalhos())
         if cols is None:
+            return False
+
+        linhas = self._linhas_seguras()
+        if linhas is None:
             return False
 
         if self.modo == "CT":
@@ -432,17 +466,18 @@ class Automacao:
         else:
             mods_filtro = config.MODS_ALVO
 
-        for i, celulas in enumerate(linhas):
+        for i, linha in enumerate(linhas):
             try:
-                if not self._cols_validas(celulas, cols):
+                colunas = linha.find_elements(By.TAG_NAME, "td")
+                if not self._cols_validas(colunas, cols):
                     continue
 
-                mod = self._txt(celulas, cols["mod"])
-                convenio = self._txt(celulas, cols["convenio"])
-                descricao = self._txt(celulas, cols["descricao"])
-                realizante = self._txt(celulas, cols["realizante"], upper=False)
-                nome = self._txt(celulas, cols["nome"], upper=False)
-                data_exame = self._txt(celulas, cols["data_exame"], upper=False)
+                mod = self._txt(colunas, cols["mod"])
+                convenio = self._txt(colunas, cols["convenio"])
+                descricao = self._txt(colunas, cols["descricao"])
+                realizante = self._txt(colunas, cols["realizante"], upper=False)
+                nome = self._txt(colunas, cols["nome"], upper=False)
+                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
 
                 if not any(m in mod for m in mods_filtro):
                     continue
@@ -457,12 +492,11 @@ class Automacao:
                 if realizante.strip():
                     continue
 
-                linha, colunas = self._elementos_da_linha(i, (nome, data_exame), cols)
-                if linha is None:
-                    return False
-
                 self.log(f"[Passo 1] {nome} ({data_exame}) — Mod {mod} | {motivo}")
-                self._clicar_icone_l(linha, colunas, cols["acoes"])
+                if not self._clicar_icone_l(linha, colunas, cols["acoes"]):
+                    # Sem encerrar aqui, o laço tentaria a mesma linha sem parar
+                    # até o prazo acabar, martelando o servidor do PACS.
+                    return False
                 if ct_cranio and (nome or data_exame):
                     self.ids_passo2_ct.add((nome, data_exame))
                     self._salvar_estado()
@@ -471,6 +505,8 @@ class Automacao:
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante Passo 1 — reiniciando.")
+                if not self._pode_reiniciar("Passo 1"):
+                    return False
                 return self._executar_passo1_uma_acao()
             except Exception as e:
                 self.log(f"  Erro Passo 1 linha {i+1}: {e}")
@@ -488,25 +524,25 @@ class Automacao:
                 return
 
     def _executar_passo2_uma_acao(self):
-        tabela = self._ler_tabela()
-        if tabela is None:
-            return False
-        cabecalhos, linhas = tabela
-
-        cols = self._detectar_colunas(cabecalhos)
+        cols = self._detectar_colunas(self._ler_cabecalhos())
         if cols is None:
             return False
 
-        for i, celulas in enumerate(linhas):
+        linhas = self._linhas_seguras()
+        if linhas is None:
+            return False
+
+        for i, linha in enumerate(linhas):
             try:
-                if not self._cols_validas(celulas, cols):
+                colunas = linha.find_elements(By.TAG_NAME, "td")
+                if not self._cols_validas(colunas, cols):
                     continue
 
-                mod = self._txt(celulas, cols["mod"])
-                convenio = self._txt(celulas, cols["convenio"])
-                realizante = self._txt(celulas, cols["realizante"], upper=False)
-                nome = self._txt(celulas, cols["nome"], upper=False)
-                data_exame = self._txt(celulas, cols["data_exame"], upper=False)
+                mod = self._txt(colunas, cols["mod"])
+                convenio = self._txt(colunas, cols["convenio"])
+                realizante = self._txt(colunas, cols["realizante"], upper=False)
+                nome = self._txt(colunas, cols["nome"], upper=False)
+                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
                 chave = (nome, data_exame)
 
                 if "DX" not in mod:
@@ -517,13 +553,15 @@ class Automacao:
                     continue
                 if (nome or data_exame) and chave in self.ids_passo3:
                     continue
-
-                linha, colunas = self._elementos_da_linha(i, chave, cols)
-                if linha is None:
-                    return False
+                if (nome or data_exame) and chave in self.ids_passo2:
+                    # Já marcamos este exame e ainda estamos esperando o convênio.
+                    # Sem esta guarda, uma tabela ainda não atualizada faria o app
+                    # clicar no "L" do mesmo exame repetidamente.
+                    continue
 
                 self.log(f"[Passo 2] '{nome} ({data_exame})' — Mod {mod} (Conv. e Realizante vazios)")
-                self._clicar_icone_l(linha, colunas, cols["acoes"])
+                if not self._clicar_icone_l(linha, colunas, cols["acoes"]):
+                    return False
                 if nome or data_exame:
                     self.ids_passo2.add(chave)
                     self._salvar_estado()
@@ -534,6 +572,8 @@ class Automacao:
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante Passo 2 — reiniciando.")
+                if not self._pode_reiniciar("Passo 2"):
+                    return False
                 return self._executar_passo2_uma_acao()
             except Exception as e:
                 self.log(f"  Erro Passo 2 linha {i+1}: {e}")
@@ -549,33 +589,33 @@ class Automacao:
         - Convênio bate Passo 1: remove da espera.
         - Convênio NÃO bate: executa Passo 3, move para ids_passo3.
         Retorna (agiu_bool, lista_de_ids_removidos_sem_acao)."""
-        tabela = self._ler_tabela()
-        if tabela is None:
-            return False, []
-        cabecalhos, linhas = tabela
-
-        cols = self._detectar_colunas(cabecalhos)
+        cols = self._detectar_colunas(self._ler_cabecalhos())
         if cols is None:
+            return False, []
+
+        linhas = self._linhas_seguras()
+        if linhas is None:
             return False, []
 
         ids_alvo = set(self.ids_passo2)
         ids_vistos = set()
         removidos = []
-        for i, celulas in enumerate(linhas):
+        for i, linha in enumerate(linhas):
             try:
-                if not self._cols_validas(celulas, cols):
+                colunas = linha.find_elements(By.TAG_NAME, "td")
+                if not self._cols_validas(colunas, cols):
                     continue
 
-                nome = self._txt(celulas, cols["nome"], upper=False)
-                data_exame = self._txt(celulas, cols["data_exame"], upper=False)
+                nome = self._txt(colunas, cols["nome"], upper=False)
+                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
                 chave = (nome, data_exame)
                 if not (nome or data_exame) or chave not in ids_alvo:
                     continue
                 ids_vistos.add(chave)
                 rotulo = f"{nome} ({data_exame})"
 
-                convenio = self._txt(celulas, cols["convenio"])
-                descricao = self._txt(celulas, cols["descricao"])
+                convenio = self._txt(colunas, cols["convenio"])
+                descricao = self._txt(colunas, cols["descricao"])
 
                 if not convenio.strip():
                     self.log(f"  '{rotulo}': Conv. ainda vazio → mantém em espera.")
@@ -584,13 +624,10 @@ class Automacao:
                 if self._convenio_bate_dx(convenio, descricao):
                     self.log(f"  '{rotulo}': Conv='{convenio}' bate parâmetros DX → encerrado sem ação.")
                     self.ids_passo2.discard(chave)
+                    self._falhas_passo3.pop(chave, None)
                     self._salvar_estado()
                     removidos.append(rotulo)
                     continue
-
-                linha, colunas = self._elementos_da_linha(i, chave, cols)
-                if linha is None:
-                    return False, removidos
 
                 self.log(f"[Passo 3] '{rotulo}' — Conv='{convenio}' NÃO bate parâmetros. Removendo realizante.")
                 ok = self._executar_passo3(linha, colunas, cols)
@@ -605,14 +642,14 @@ class Automacao:
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante checagem — reiniciando.")
+                if not self._pode_reiniciar("checagem"):
+                    return False, removidos
                 return self._checar_ids_aguardando()
             except Exception as e:
                 self.log(f"  Erro checagem linha {i+1}: {e}")
                 continue
 
-        nao_encontrados = ids_alvo - ids_vistos
-        if nao_encontrados:
-            self.log(f"  Exames em espera não encontrados na tabela: {sorted(nao_encontrados)}")
+        removidos += self._cobrar_ausencias(self.ids_passo2, ids_alvo - ids_vistos, ids_vistos)
         return False, removidos
 
     def _checar_ct_aguardando(self):
@@ -621,32 +658,32 @@ class Automacao:
         - Convênio UNIMED: executa Passo 3 (desmarca realizante), move para ids_passo3.
         - Outro convênio: mantém o L e remove da espera.
         Retorna (agiu_bool, lista_de_ids_removidos_sem_acao)."""
-        tabela = self._ler_tabela()
-        if tabela is None:
-            return False, []
-        cabecalhos, linhas = tabela
-
-        cols = self._detectar_colunas(cabecalhos)
+        cols = self._detectar_colunas(self._ler_cabecalhos())
         if cols is None:
+            return False, []
+
+        linhas = self._linhas_seguras()
+        if linhas is None:
             return False, []
 
         ids_alvo = set(self.ids_passo2_ct)
         ids_vistos = set()
         removidos = []
-        for i, celulas in enumerate(linhas):
+        for i, linha in enumerate(linhas):
             try:
-                if not self._cols_validas(celulas, cols):
+                colunas = linha.find_elements(By.TAG_NAME, "td")
+                if not self._cols_validas(colunas, cols):
                     continue
 
-                nome = self._txt(celulas, cols["nome"], upper=False)
-                data_exame = self._txt(celulas, cols["data_exame"], upper=False)
+                nome = self._txt(colunas, cols["nome"], upper=False)
+                data_exame = self._txt(colunas, cols["data_exame"], upper=False)
                 chave = (nome, data_exame)
                 if not (nome or data_exame) or chave not in ids_alvo:
                     continue
                 ids_vistos.add(chave)
                 rotulo = f"{nome} ({data_exame})"
 
-                convenio = self._txt(celulas, cols["convenio"])
+                convenio = self._txt(colunas, cols["convenio"])
 
                 if not convenio.strip():
                     self.log(f"  [CT] '{rotulo}': Conv. ainda vazio → mantém em espera.")
@@ -655,13 +692,10 @@ class Automacao:
                 if "UNIMED" not in convenio:
                     self.log(f"  [CT] '{rotulo}': Conv='{convenio}' não é UNIMED → encerrado sem ação.")
                     self.ids_passo2_ct.discard(chave)
+                    self._falhas_passo3.pop(chave, None)
                     self._salvar_estado()
                     removidos.append(rotulo)
                     continue
-
-                linha, colunas = self._elementos_da_linha(i, chave, cols)
-                if linha is None:
-                    return False, removidos
 
                 self.log(f"[Passo 3 CT] '{rotulo}' — Conv='{convenio}' é UNIMED. Removendo realizante.")
                 ok = self._executar_passo3(linha, colunas, cols)
@@ -676,14 +710,15 @@ class Automacao:
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante checagem CT — reiniciando.")
+                if not self._pode_reiniciar("checagem CT"):
+                    return False, removidos
                 return self._checar_ct_aguardando()
             except Exception as e:
                 self.log(f"  Erro checagem CT linha {i+1}: {e}")
                 continue
 
-        nao_encontrados = ids_alvo - ids_vistos
-        if nao_encontrados:
-            self.log(f"  [CT] Exames em espera não encontrados na tabela: {sorted(nao_encontrados)}")
+        removidos += self._cobrar_ausencias(
+            self.ids_passo2_ct, ids_alvo - ids_vistos, ids_vistos, "[CT] ")
         return False, removidos
 
     def _convenio_bate_dx(self, convenio, descricao):
@@ -787,52 +822,14 @@ class Automacao:
 
     # ---------- AUXILIARES ----------
 
-    def _ler_tabela(self):
-        """Lê cabeçalhos e células da tabela inteira numa única chamada ao navegador.
+    def _ler_cabecalhos(self):
+        """Lê o texto dos cabeçalhos da tabela.
 
-        Antes cada célula custava uma ida e volta ao Chrome (~210 por varredura,
-        uns 2 segundos). Agora é uma chamada só e toda a filtragem acontece em
-        Python, instantânea. Devolve (cabecalhos, linhas) como listas de texto.
+        Usa o .text do Selenium de propósito: ele devolve vazio para tabelas
+        ocultas na página (templates, modais), enquanto o innerText do
+        JavaScript devolveria o texto delas e bagunçaria os índices das colunas.
         """
-        try:
-            dados = self.driver.execute_script(JS_LER_TABELA)
-        except Exception as e:
-            self.log(f"Erro ao ler a tabela: {e}")
-            return None
-        if not dados:
-            self.log("Tabela não encontrada na página.")
-            return None
-        return dados["cabecalhos"], dados["linhas"]
-
-    def _elementos_da_linha(self, indice, esperado, cols):
-        """Busca no navegador o <tr> da posição indicada, para poder clicar nele.
-
-        A tabela é lida por JavaScript e o clique acontece depois. Se a tabela
-        mudou nesse intervalo, o índice pode apontar para outro paciente — por
-        isso conferimos nome e data antes de liberar a ação.
-        """
-        linhas = self._linhas_seguras()
-        if linhas is None or indice >= len(linhas):
-            return None, None
-        linha = linhas[indice]
-        colunas = linha.find_elements(By.TAG_NAME, "td")
-        atual = (self._txt_elemento(colunas, cols["nome"], upper=False),
-                 self._txt_elemento(colunas, cols["data_exame"], upper=False))
-        if atual != esperado:
-            self.log(f"  Tabela mudou antes do clique — linha {indice + 1} agora é "
-                     f"'{atual[0]} ({atual[1]})'. Ação cancelada por segurança.")
-            return None, None
-        return linha, colunas
-
-    def _txt_elemento(self, colunas, idx, upper=True):
-        """Como _txt, mas para células vindas do Selenium.
-
-        Usado só na conferência de identidade antes de clicar.
-        """
-        if idx < 0 or idx >= len(colunas):
-            return ""
-        t = colunas[idx].text.strip()
-        return t.upper() if upper else t
+        return [h.text.strip() for h in self.driver.find_elements(By.XPATH, "//table//th")]
 
     def _avaliar_passo1(self, mod, convenio, descricao, nome, ja_desmarcado):
         """Decide se um exame deve ser marcado no Passo 1. Não toca no navegador.
@@ -894,10 +891,10 @@ class Automacao:
             return False
         return len(colunas) > max(indices)
 
-    def _txt(self, celulas, idx, upper=True):
-        if idx < 0 or idx >= len(celulas):
+    def _txt(self, colunas, idx, upper=True):
+        if idx < 0 or idx >= len(colunas):
             return ""
-        t = celulas[idx].strip()
+        t = colunas[idx].text.strip()
         return t.upper() if upper else t
 
     def _extrair_idade(self, nome):
@@ -912,6 +909,9 @@ class Automacao:
 
     @_cronometrar("buscar_exames")
     def _clicar_buscar_exames(self):
+        # Toda varredura começa por aqui, e a recursão de tabela instável não
+        # passa por este ponto — então é o lugar certo para zerar o contador.
+        self._reinicios = 0
         botao = self._encontrar_elemento([
             (By.XPATH, "//button[contains(translate(.,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
             (By.XPATH, "//a[contains(translate(.,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'BUSCAR EXAME')]"),
@@ -952,7 +952,7 @@ class Automacao:
 
             if not icone:
                 self.log("Ícone 'L' não encontrado nesta linha.")
-                return
+                return False
 
             janelas_antes = set(self.driver.window_handles)
             self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", icone)
@@ -968,9 +968,11 @@ class Automacao:
 
             self.driver.switch_to.window(list(janelas_antes)[0])
             self.log("  Ação L concluída.")
+            return True
 
         except Exception as e:
             self.log(f"Erro ao processar ícone L: {e}")
+            return False
 
     def _confirmar_popup(self):
         try:
@@ -1027,21 +1029,23 @@ class Automacao:
         except Exception:
             return None
 
-    def _esperar_tabela_pronta(self, antes, teto=2.0, estabilidade=0.8):
-        """Espera a tabela responder ao clique em Buscar Exames.
+    def _esperar_tabela_pronta(self, antes, teto=2.0, estabilidade=0.4):
+        """Espera a tabela terminar de recarregar após o clique em Buscar Exames.
 
-        Substitui um sleep(2) fixo. Sai assim que a tabela muda. Se ela não
-        mudar dentro do tempo de estabilidade, assume que a busca devolveu o
-        mesmo resultado e segue — ler uma tabela um pouco defasada é seguro,
-        porque _elementos_da_linha confere nome e data antes de qualquer clique.
+        Substitui um sleep(2) fixo. Acompanha a impressão digital da tabela e só
+        libera quando ela fica PARADA por `estabilidade` segundos — assim não se
+        lê uma tabela no meio da renderização. O `teto` limita a espera total.
         """
         fim = time.time() + teto
-        limite_parado = time.time() + estabilidade
+        ultima = antes
+        parada_desde = time.time()
         while time.time() < fim:
             time.sleep(0.1)
-            if self._assinatura_tabela() != antes:
-                return
-            if time.time() >= limite_parado:
+            agora = self._assinatura_tabela()
+            if agora != ultima:
+                ultima = agora
+                parada_desde = time.time()
+            elif time.time() - parada_desde >= estabilidade:
                 return
 
     def _esperar_nova_janela(self, janelas_antes, teto=1.0):
