@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## O que é este projeto
 
-Automação para o sistema PACS da Print Imagem (`https://pacs.printimagem.com.br`). O app abre o Microsoft Edge, faz login automaticamente e a cada 30 segundos clica em "Buscar Exames". Para exames com modalidade CT ou DX e convênios específicos, clica no ícone "L" da coluna Ações, confirma o popup com "Sim" e fecha a aba aberta.
+Automação para o sistema PACS da Print Imagem (`https://pacs.printimagem.com.br`). O app abre o Google Chrome, faz login automaticamente e percorre a lista de exames marcando e desmarcando o campo **Realizante**, conforme regras de modalidade (CT/DX), convênio, descrição do exame e idade do paciente.
 
-Possui interface gráfica com botão ATIVAR/DESATIVAR para controlar a automação.
+A interface tem três botões — **CT e DX**, **CT** e **DX** — que escolhem o modo de operação. Só um modo fica ativo por vez; ao desativar, o navegador continua aberto.
 
 ## Estrutura dos arquivos
 
@@ -16,45 +16,103 @@ Possui interface gráfica com botão ATIVAR/DESATIVAR para controlar a automaç�
 | `automacao.py` | Lógica Selenium: login, busca, análise da tabela, cliques |
 | `config.py` | Credenciais e parâmetros — **não commitado** (ver `.gitignore`) |
 | `config.exemplo.py` | Template de `config.py` com valores fictícios |
-| `iniciar.bat` | Lançador — duplo clique para abrir o app |
+| `instalar.bat` | Instalador completo: acha ou instala o Python, instala as dependências, cria o `config.py` e o atalho na área de trabalho |
+| `iniciar.bat` | Lançador — duplo clique para abrir o app (é reescrito pelo `instalar.bat`) |
+| `instalar_driver.bat` | **Obsoleto** — baixa o driver do Edge, que o código não usa mais |
 | `Print Automação.lnk` | Atalho do Windows na pasta do projeto |
+| `*.png` | Capturas de tela do PACS, guardadas como referência |
 
 ## Como executar
 
 ```
-# Instalar dependências (apenas na primeira vez)
-pip install -r requirements.txt
+# Primeira vez: duplo clique em instalar.bat
+# (instala Python, dependências, cria config.py e o atalho)
 
-# Iniciar o app
+# Ou manualmente:
+pip install -r requirements.txt
 python main.py
-# ou duplo clique em: iniciar.bat
+
+# No dia a dia: duplo clique em iniciar.bat
 ```
 
 ## Configuração
 
-Copiar `config.exemplo.py` para `config.py` e preencher:
+Copiar `config.exemplo.py` para `config.py` e preencher — o `instalar.bat` já faz isso e abre o arquivo no Bloco de Notas.
 
-```python
-USUARIO = "seu_usuario"
-SENHA   = "sua_senha"
-```
+| Parâmetro | Para que serve |
+|---|---|
+| `URL` | Endereço da tela de login do PACS |
+| `USUARIO` / `SENHA` | Credenciais do PACS |
+| `REALIZANTE_NOME` | Nome procurado na coluna Realizante |
+| `MODS_ALVO` | Modalidades consideradas no modo "CT e DX" |
+| `CONVENIOS_ALVO` | Convênios que autorizam marcar o realizante |
+| `VARREDURA_DURACAO_SEG` / `VARREDURA_VERIFICACOES` | Duração da etapa de varredura e em quantas fatias ela é dividida |
+| `CHECAGEM_DURACAO_SEG` / `CHECAGEM_MAX_ACOES` | Limites da etapa de checagem |
+| `INTERVALO_SEGUNDOS` | **Não é usado pelo código** — sobra de uma versão anterior |
 
 `config.py` está no `.gitignore` e nunca deve ser commitado.
 
 ## Dependências
 
 - Python 3.12+
-- `selenium` 4.21 — controla o Edge
-- `webdriver-manager` 4.0 — baixa o driver correto do Edge automaticamente
+- `selenium` 4.21 — controla o Chrome
 - `tkinter` — interface gráfica (incluso no Python)
-- Microsoft Edge instalado no sistema
+- Google Chrome instalado no sistema (o Selenium baixa o driver sozinho)
+
+O `requirements.txt` também lista `webdriver-manager` 4.0, mas nenhum arquivo `.py` o importa — é dependência morta.
 
 ## Fluxo da automação (`automacao.py`)
 
-1. `iniciar()` → abre Edge → chama `_fazer_login()` → entra em `_loop_principal()`
-2. A cada 30s: `_buscar_e_processar()` → clica no botão → `_processar_tabela()`
-3. Para cada linha: verifica coluna **Mod.** (CT/DX) e coluna **Convênio** (lista em `config.py`)
-4. Se ambas batem: `_clicar_icone_l()` → `_confirmar_popup()` → fecha aba extra
+**Entrada:** `main.py` chama `Automacao.iniciar(modo)` numa thread separada. O `iniciar()` interrompe qualquer loop anterior (via `_loop_lock`), abre o Chrome, faz `_fazer_login()` e entra em `_loop_principal()`.
+
+**Modo CT** → `_loop_ct_only()`: laço contínuo — clica em Buscar Exames, executa uma ação do Passo 1 e uma verificação de CT crânio. Se nada aconteceu, espera 10s e repete.
+
+**Modos "CT e DX" e "DX"** → `_loop_principal()` repete três etapas em ciclo:
+
+| Etapa | O que faz |
+|---|---|
+| 1. Reconciliação (`_etapa_reconciliacao`) | Limpa sobras de sessões anteriores: exames **DX** com o realizante marcado mas convênio que não bate as regras → Passo 3. Máximo de 10 ações. |
+| 2. Varredura (`_etapa_varredura`) | Alterna Passo 1 e Passo 2 até esgotar. Dura `VARREDURA_DURACAO_SEG`, dividido em `VARREDURA_VERIFICACOES` fatias. |
+| 3. Checagem (`_etapa_checagem`) | Revisita os exames deixados em espera. Limitada por `CHECAGEM_DURACAO_SEG` e `CHECAGEM_MAX_ACOES`. Se não há ninguém em espera, encerra na hora. |
+
+### Os três passos
+
+**Passo 1 — marcar** (`_executar_passo1_uma_acao`). Só age se a coluna Realizante estiver **vazia**. Marca (clica no ícone "L", confirma o popup com "Sim" e fecha a aba extra) quando:
+
+- **CT de crânio** com idade ≤ 45 e convênio **não** UNIMED → marca e guarda em `ids_passo2_ct` para verificar depois
+- Descrição com **ANGIO** e convênio não UNIMED
+- **CT** com TEP ou CARÓTIDA e convênio não UNIMED
+- Caso geral: convênio presente em `CONVENIOS_ALVO` — exceto SAS, FLIP, ARAMART, AVICOLA e HI-MIX, que não valem quando a modalidade é CT
+
+**Passo 2 — marcar e esperar** (`_executar_passo2_uma_acao`). Exames **DX** com Convênio **e** Realizante vazios: marca o "L" e guarda em `ids_passo2`. O convênio ainda vai aparecer no sistema; a checagem decide depois se a marcação valeu.
+
+**Passo 3 — desmarcar** (`_executar_passo3`). Abre o popup "Editar realizante", desmarca o checkbox e salva. É o que desfaz uma marcação indevida.
+
+### Como a checagem decide
+
+`_checar_ids_aguardando()` — os DX do Passo 2:
+
+| Situação | Ação |
+|---|---|
+| Convênio ainda vazio | Mantém em espera |
+| Convênio bate as regras DX (`_convenio_bate_dx`) | Encerra sem ação — a marcação estava certa |
+| Convênio não bate | Passo 3 — desmarca |
+
+`_checar_ct_aguardando()` — os CT crânio do Passo 1:
+
+| Situação | Ação |
+|---|---|
+| Convênio ainda vazio | Mantém em espera |
+| Convênio é UNIMED | Passo 3 — desmarca |
+| Outro convênio | Mantém marcado e tira da espera |
+
+### Conjuntos de controle
+
+Cada exame é identificado pelo par `(nome, data do exame)`.
+
+- `ids_passo2` — DX marcados no Passo 2, esperando o convênio aparecer
+- `ids_passo2_ct` — CT crânio marcados no Passo 1, esperando o convênio
+- `ids_passo3` — exames já desmarcados. O Passo 2 e a regra de CT crânio do Passo 1 consultam essa lista para não remarcar; as demais regras do Passo 1 (ANGIO, CT especial, convênio da lista) **não** a consultam
 
 ## Atualizar repositório GitHub após mudanças
 
