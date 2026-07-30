@@ -6,11 +6,22 @@ venv/
 
 # Skills instaladas pelas ferramentas de IA (nao fazem parte do projeto)
 .agents/
-.claude/skills/
 .cursor/
 .windsurf/
+.claude/skills/*
+# excecao: as skills do ponytail viajam com o repositorio
+!.claude/skills/ponytail/
+!.claude/skills/ponytail-audit/
+!.claude/skills/ponytail-review/
+
+# Atalho do Windows com caminho absoluto - cada maquina cria o seu via instalar.bat
+Print Automação.lnk
 
 # graphify: estado local da maquina (caminho absoluto desta maquina) - nunca versionar
 /graphify-out/.graphify_python
 /graphify-out/.graphify_root
 /graphify-out/.needs_update
+/graphify-out/cache/
+
+# Gerado pelo instalar.bat com o caminho do Python de cada maquina
+iniciar.bat

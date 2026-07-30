@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "Set-Location 'C:\\Users\\artur\\Desktop\\Projetos\\Print'; $env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH','User'); git add .; $diff = git diff --cached --quiet; if ($LASTEXITCODE -ne 0) { git commit -m 'auto: atualizacao via Claude Code'; git push }",
+            "command": "$env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH','User'); $root = git rev-parse --show-toplevel; if ($root) { Set-Location $root; git add .; git diff --cached --quiet; if ($LASTEXITCODE -ne 0) { git commit -m 'auto: atualizacao via Claude Code'; git push } }",
             "shell": "powershell",
             "timeout": 30,
             "statusMessage": "Sincronizando com GitHub..."
@@ -19,7 +19,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/artur/.local/bin/graphify.EXE hook-guard search"
+            "command": "$g = \"$env:USERPROFILE\\.local\\bin\\graphify.EXE\"; if (Test-Path $g) { & $g hook-guard search }",
+            "shell": "powershell"
           }
         ]
       },
@@ -28,7 +29,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/artur/.local/bin/graphify.EXE hook-guard read"
+            "command": "$g = \"$env:USERPROFILE\\.local\\bin\\graphify.EXE\"; if (Test-Path $g) { & $g hook-guard read }",
+            "shell": "powershell"
           }
         ]
       }

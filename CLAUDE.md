@@ -17,8 +17,7 @@ A interface tem três botões — **CT e DX**, **CT** e **DX** — que escolhem 
 | `config.py` | Credenciais e parâmetros — **não commitado** (ver `.gitignore`) |
 | `config.exemplo.py` | Template de `config.py` com valores fictícios |
 | `instalar.bat` | Instalador completo: acha ou instala o Python, instala as dependências, cria o `config.py` e o atalho na área de trabalho |
-| `iniciar.bat` | Lançador — duplo clique para abrir o app (é reescrito pelo `instalar.bat`) |
-| `Print Automação.lnk` | Atalho do Windows na pasta do projeto |
+| `iniciar.bat` | Lançador — duplo clique para abrir o app (gerado pelo `instalar.bat`, fora do Git) |
 | `*.png` | Capturas de tela do PACS, guardadas como referência |
 
 ## Como executar
@@ -117,7 +116,7 @@ Cada exame é identificado pelo par `(nome, data do exame)`.
 Para commitar manualmente com uma mensagem descritiva:
 
 ```
-cd C:\Users\artur\Desktop\Projetos\Print
+cd <pasta do projeto>
 git add .
 git commit -m "descrição da mudança"
 git push
