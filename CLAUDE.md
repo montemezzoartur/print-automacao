@@ -164,7 +164,9 @@ Esta parte define como devemos trabalhar juntos. Ela complementa o CLAUDE.md glo
 
 ## Registro de progresso
 
-- Manter um arquivo `memory.md` atualizado a cada passo, avanço ou evolução do projeto.
+- Manter um arquivo `memory.md` atualizado com **tudo**: avanços, alterações, decisões (e o porquê delas) e também **regressões e reversões** — o que deu errado, como foi descoberto e o que precisou ser desfeito.
+- Registrar no momento em que acontece, não só no fim da tarefa.
+- Um erro revertido é informação tão valiosa quanto uma correção que funcionou: sem esse registro, o mesmo caminho é tentado de novo.
 
 ## Prioridade das diretrizes
 
