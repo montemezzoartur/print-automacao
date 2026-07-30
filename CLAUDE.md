@@ -59,74 +59,66 @@ SENHA   = "sua_senha"
 ## Atualizar repositório GitHub após mudanças
 
 ```
-cd C:\Users\artur\OneDrive\Controle\Projetos\Print
+cd C:\Users\artur\Desktop\Projetos\Print
 git add .
 git commit -m "descrição da mudança"
 git push
 ```
 
-# CLAUDE.md
-
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-## 1. Think Before Coding
-
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-## 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-## 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-
 ---
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+# Base de trabalho
+
+Esta parte define como devemos trabalhar juntos. Ela complementa o CLAUDE.md global — as orientações globais continuam valendo sempre. Em caso de conflito, vale a ordem de prioridade descrita no final deste documento.
+
+## Como se comunicar comigo
+
+- Sempre responder em português, de forma clara e simples.
+- Sou um desenvolvedor **não técnico** → evitar jargão. Quando um termo técnico for inevitável, explicá-lo em uma frase.
+- Quando eu precisar fazer algo manualmente, fornecer sempre um **passo a passo numerado**, simples e na ordem certa.
+- Continuar levantando dúvidas e suposições: se algo estiver ambíguo, perguntar antes de implementar.
+
+## Skills e plugins
+
+- Sempre usar as skills e plugins instalados quando forem úteis, em vez de fazer "na mão".
+- Ênfase no plugin **superpowers**, em especial:
+  - `brainstorming` → antes de criar/projetar algo novo.
+  - `test-driven-development` → ao escrever código (teste antes da implementação).
+  - `systematic-debugging` → ao investigar erros/bugs.
+- Usar as demais skills do superpowers e das outras skills instaladas conforme a situação pedir.
+
+## Qualidade de código
+
+- Revisar e testar o código após cada alteração. Não dar uma etapa por concluída sem evidência de que funciona.
+- Code review é **OBRIGATÓRIO** após TODA implementação nova ou modificação, ANTES do merge na branch principal (usar a skill de code review / `superpowers:requesting-code-review`). Não é opcional: rodar testes não substitui a revisão — a revisão já pegou bug crítico que os testes não pegaram. Verificar os apontamentos antes de aplicar e corrigir os críticos/importantes.
+- **SEMPRE perguntar COMO fazer a revisão ANTES de lançá-la** — decidir juntos. A revisão via workflow (`/code-review`) dispara muitos subagentes e gasta muitos tokens (nível `xhigh` ≈ 15–30× uma revisão inline). Antes de disparar, apresentar as opções (inline leve · workflow em nível menor · workflow `xhigh`) e o custo, e esperar a escolha. Regra de bolso: inline/leve para mudanças pequenas ou de UI; `xhigh` só para mudanças grandes, de lógica ou arriscadas.
+- Seguir boas práticas: código simples, claro, sem duplicação desnecessária.
+
+## Fluxo de trabalho com Git (branches e merge)
+
+- Desenvolver cada etapa/tarefa em uma **branch separada** e, depois de revisada e testada, mesclar na branch principal.
+- **Nunca** desenvolver direto na branch principal.
+- Commits pequenos e descritivos por etapa.
+
+## Design
+
+- Não usar a skill `frontend-design` — exceto se for explicitamente pedida.
+- Se o projeto tiver arquivos de referência de design (ex.: `PRODUCT.md` para o "quem/o quê/porquê" e `DESIGN.md` para o sistema visual — tokens, paleta, tipografia, componentes), ler e partir deles antes de qualquer trabalho de interface, respeitando as regras neles definidas.
+
+## Registro de progresso
+
+- Manter um arquivo `memory.md` atualizado a cada passo, avanço ou evolução do projeto.
+
+## graphify (quando o projeto usar)
+
+- Para perguntas sobre o código, primeiro rodar `graphify query "<pergunta>"` quando `graphify-out/graph.json` existir. Usar `graphify path "<A>" "<B>"` para relações e `graphify explain "<conceito>"` para conceitos focados — retornam um subgrafo pequeno, mais enxuto que o `GRAPH_REPORT.md` ou o grep cru.
+- Se `graphify-out/wiki/index.md` existir, usá-lo para navegação ampla em vez de folhear o código cru.
+- Ler `graphify-out/GRAPH_REPORT.md` só para revisão ampla de arquitetura, ou quando `query`/`path`/`explain` não trouxerem contexto suficiente.
+- Depois de modificar código, rodar `graphify update .` para manter o grafo atual (AST, sem custo de API).
+
+## Prioridade das diretrizes
+
+1. Instruções diretas suas (no chat).
+2. Este arquivo (CLAUDE.md do projeto).
+3. CLAUDE.md global.
+4. Comportamento padrão.
