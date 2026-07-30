@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Skills instaladas pelas ferramentas de IA (nao fazem parte do projeto)
+.agents/
+.claude/skills/
+.cursor/
+.windsurf/
