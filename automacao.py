@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import time
 import functools
 import threading
@@ -16,6 +17,10 @@ import config
 
 
 LOG_ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "automacao.log")
+ESTADO_ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "estado.json")
+
+# Listas de espera guardadas em disco entre execuções.
+CONJUNTOS_DE_ESTADO = ("ids_passo2", "ids_passo2_ct", "ids_passo3")
 
 # Convênios que valem para DX mas não para CT.
 CONVENIOS_SEM_CT = ("SAS", "FLIP", "ARAMART", "AVICOLA", "HI-MIX")
@@ -64,6 +69,53 @@ class Automacao:
         self.ids_passo3 = set()
         self.modo = "AMBOS"
         self._loop_lock = threading.Lock()
+        self._avisos_dados = set()
+        self._falhas_passo3 = {}
+        self._carregar_estado()
+
+    def _carregar_estado(self):
+        """Recupera as listas de espera do disco.
+
+        Sem isso, fechar o app apagava a lista e todo exame que aguardava o
+        convênio aparecer ficava marcado com o nome do usuário para sempre.
+        """
+        try:
+            with open(ESTADO_ARQUIVO, encoding="utf-8") as f:
+                dados = json.load(f)
+        except (FileNotFoundError, ValueError, OSError):
+            return
+        for campo in CONJUNTOS_DE_ESTADO:
+            valores = dados.get(campo) or []
+            setattr(self, campo, {tuple(par) for par in valores if len(par) == 2})
+        if self.ids_passo2 or self.ids_passo2_ct:
+            self.log(f"Estado recuperado — DX em espera: {sorted(self.ids_passo2)}, "
+                     f"CT em espera: {sorted(self.ids_passo2_ct)}")
+
+    def _salvar_estado(self):
+        dados = {campo: sorted(getattr(self, campo)) for campo in CONJUNTOS_DE_ESTADO}
+        try:
+            with open(ESTADO_ARQUIVO, "w", encoding="utf-8") as f:
+                json.dump(dados, f, ensure_ascii=False, indent=1)
+        except OSError as e:
+            self.log(f"Não foi possível salvar o estado em disco: {e}")
+
+    def _avisar_uma_vez(self, chave, mensagem):
+        """Registra um aviso grave só na primeira vez, para não inundar o log."""
+        if chave in self._avisos_dados:
+            return
+        self._avisos_dados.add(chave)
+        self.log(mensagem)
+
+    def _registrar_falha_passo3(self, chave, rotulo):
+        """Conta falhas seguidas de desmarcação no mesmo exame.
+
+        Um exame que falha sempre é exatamente o que "fica marcado para sempre".
+        """
+        n = self._falhas_passo3.get(chave, 0) + 1
+        self._falhas_passo3[chave] = n
+        if n >= 3:
+            self.log(f"  ATENÇÃO: desmarcação falhou {n}x seguidas em '{rotulo}'. "
+                     f"Esse exame continua com o realizante preenchido.")
 
     def log(self, msg, so_arquivo=False):
         agora = datetime.now()
@@ -228,12 +280,15 @@ class Automacao:
         cols = self._detectar_colunas(cabecalhos)
         if cols is None:
             return False
-        if cols.get("realizante", -1) < 0:
-            self.log("  Coluna Realizante não localizada — reconciliação abortada.")
-            return False
-        if cols.get("laudo", -1) < 0:
-            self.log("  Coluna Laudo não localizada — reconciliação abortada.")
-            return False
+        for coluna in ("realizante", "laudo"):
+            if cols.get(coluna, -1) < 0:
+                self._avisar_uma_vez(
+                    f"coluna_{coluna}",
+                    f"PROBLEMA GRAVE: coluna '{coluna}' não encontrada na tabela. "
+                    f"A reconciliação inteira não roda, então exames marcados em "
+                    f"sessões anteriores NUNCA serão desmarcados. "
+                    f"Cabeçalhos lidos: {cabecalhos}")
+                return False
 
         alvo_realizante = config.REALIZANTE_NOME.upper()
 
@@ -273,13 +328,15 @@ class Automacao:
 
                 self.log(f"[Reconciliação] '{rotulo}' — Conv='{convenio}' NÃO bate parâmetros DX. Removendo realizante órfão.")
                 ok = self._executar_passo3(linha, colunas, cols)
+                chave = (nome, data_exame)
                 if ok:
-                    chave = (nome, data_exame)
                     self.ids_passo2.discard(chave)
                     self.ids_passo3.add(chave)
+                    self._falhas_passo3.pop(chave, None)
+                    self._salvar_estado()
                     return True
-                else:
-                    self.log(f"  Reconciliação falhou para '{rotulo}'.")
+                self.log(f"  Reconciliação falhou para '{rotulo}'.")
+                self._registrar_falha_passo3(chave, rotulo)
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante reconciliação — reiniciando.")
@@ -341,8 +398,13 @@ class Automacao:
                 self.log("  Sem exames em espera — encerrando checagem antecipadamente.")
                 break
             if not agiu and not removidos:
-                self.log("  Nenhum exame cumpre critérios — encerrando checagem antecipadamente.")
-                break
+                # Antes a checagem desistia aqui, na primeira passada sem ação.
+                # Só que o convênio costuma aparecer alguns segundos depois da
+                # marcação: desistir empurrava a desmarcação para o ciclo
+                # seguinte, uns 90 segundos depois. Agora insiste dentro do
+                # orçamento, que é barato desde que a leitura virou uma
+                # chamada só.
+                self._aguardar_ate(min(time.time() + 2, fim))
 
     # ---------- PASSO 1 ----------
 
@@ -403,6 +465,7 @@ class Automacao:
                 self._clicar_icone_l(linha, colunas, cols["acoes"])
                 if ct_cranio and (nome or data_exame):
                     self.ids_passo2_ct.add((nome, data_exame))
+                    self._salvar_estado()
                     self.log(f"  [CT] '{nome} ({data_exame})' marcado para verificação. ids_passo2_ct: {sorted(self.ids_passo2_ct)}")
                 return True
 
@@ -463,6 +526,7 @@ class Automacao:
                 self._clicar_icone_l(linha, colunas, cols["acoes"])
                 if nome or data_exame:
                     self.ids_passo2.add(chave)
+                    self._salvar_estado()
                     self.log(f"  '{nome} ({data_exame})' gravado. ids_passo2 agora: {sorted(self.ids_passo2)}")
                 else:
                     self.log("  ATENÇÃO: Nome/Data do exame vazios — não foi possível gravar para checagem.")
@@ -520,6 +584,7 @@ class Automacao:
                 if self._convenio_bate_dx(convenio, descricao):
                     self.log(f"  '{rotulo}': Conv='{convenio}' bate parâmetros DX → encerrado sem ação.")
                     self.ids_passo2.discard(chave)
+                    self._salvar_estado()
                     removidos.append(rotulo)
                     continue
 
@@ -532,9 +597,11 @@ class Automacao:
                 if ok:
                     self.ids_passo2.discard(chave)
                     self.ids_passo3.add(chave)
+                    self._falhas_passo3.pop(chave, None)
+                    self._salvar_estado()
                     return True, removidos
-                else:
-                    self.log(f"  Passo 3 falhou para '{rotulo}' — manterá em espera.")
+                self.log(f"  Passo 3 falhou para '{rotulo}' — manterá em espera.")
+                self._registrar_falha_passo3(chave, rotulo)
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante checagem — reiniciando.")
@@ -588,6 +655,7 @@ class Automacao:
                 if "UNIMED" not in convenio:
                     self.log(f"  [CT] '{rotulo}': Conv='{convenio}' não é UNIMED → encerrado sem ação.")
                     self.ids_passo2_ct.discard(chave)
+                    self._salvar_estado()
                     removidos.append(rotulo)
                     continue
 
@@ -600,9 +668,11 @@ class Automacao:
                 if ok:
                     self.ids_passo2_ct.discard(chave)
                     self.ids_passo3.add(chave)
+                    self._falhas_passo3.pop(chave, None)
+                    self._salvar_estado()
                     return True, removidos
-                else:
-                    self.log(f"  Passo 3 CT falhou para '{rotulo}' — manterá em espera.")
+                self.log(f"  Passo 3 CT falhou para '{rotulo}' — manterá em espera.")
+                self._registrar_falha_passo3(chave, rotulo)
 
             except StaleElementReferenceException:
                 self.log("  Tabela mudou durante checagem CT — reiniciando.")

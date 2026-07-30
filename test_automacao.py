@@ -12,14 +12,18 @@ import automacao
 
 class LogEmArquivo(unittest.TestCase):
     def setUp(self):
-        self.arquivo = os.path.join(tempfile.mkdtemp(), "teste.log")
+        pasta = tempfile.mkdtemp()
+        self.arquivo = os.path.join(pasta, "teste.log")
         self._original = automacao.LOG_ARQUIVO
+        self._estado_original = automacao.ESTADO_ARQUIVO
         automacao.LOG_ARQUIVO = self.arquivo
+        automacao.ESTADO_ARQUIVO = os.path.join(pasta, "estado.json")
         self.janela = []
         self.a = automacao.Automacao(log_callback=self.janela.append)
 
     def tearDown(self):
         automacao.LOG_ARQUIVO = self._original
+        automacao.ESTADO_ARQUIVO = self._estado_original
 
     def _conteudo(self):
         with open(self.arquivo, encoding="utf-8") as f:
@@ -89,12 +93,17 @@ class SemNavegador(unittest.TestCase):
     """Base para testar a lógica pura, que não abre o Chrome."""
 
     def setUp(self):
+        pasta = tempfile.mkdtemp()
         self._log_original = automacao.LOG_ARQUIVO
-        automacao.LOG_ARQUIVO = os.path.join(tempfile.mkdtemp(), "teste.log")
-        self.a = automacao.Automacao(log_callback=lambda _: None)
+        self._estado_original = automacao.ESTADO_ARQUIVO
+        automacao.LOG_ARQUIVO = os.path.join(pasta, "teste.log")
+        automacao.ESTADO_ARQUIVO = os.path.join(pasta, "estado.json")
+        self.registros = []
+        self.a = automacao.Automacao(log_callback=self.registros.append)
 
     def tearDown(self):
         automacao.LOG_ARQUIVO = self._log_original
+        automacao.ESTADO_ARQUIVO = self._estado_original
 
 
 class DetectarColunas(SemNavegador):
@@ -307,6 +316,67 @@ class OrcamentoDeTempo(SemNavegador):
         # presenca_of_element_located, o comportamento antigo, não exigia visibilidade
         self.a.driver = NavegadorFalso(casam={"s0": 1}, invisiveis={"s0"})
         self.assertEqual(self.a._encontrar_elemento(self.SELETORES, teto=1).sel, "s0")
+
+
+class EstadoEmDisco(SemNavegador):
+    """A causa mais provável de 'fica marcado para sempre': fechar o app
+    apagava a lista de exames aguardando o convênio aparecer."""
+
+    def test_lista_de_espera_sobrevive_a_reabertura_do_app(self):
+        self.a.ids_passo2.add(("MARIA 40", "01/07/2026"))
+        self.a.ids_passo2_ct.add(("JOAO 30", "02/07/2026"))
+        self.a.ids_passo3.add(("ANA 50", "03/07/2026"))
+        self.a._salvar_estado()
+
+        outro = automacao.Automacao(log_callback=lambda _: None)
+        self.assertEqual(outro.ids_passo2, {("MARIA 40", "01/07/2026")})
+        self.assertEqual(outro.ids_passo2_ct, {("JOAO 30", "02/07/2026")})
+        self.assertEqual(outro.ids_passo3, {("ANA 50", "03/07/2026")})
+
+    def test_sem_arquivo_comeca_vazio(self):
+        self.assertEqual(self.a.ids_passo2, set())
+
+    def test_arquivo_corrompido_nao_derruba_o_app(self):
+        with open(automacao.ESTADO_ARQUIVO, "w", encoding="utf-8") as f:
+            f.write("{isso nao e json")
+        outro = automacao.Automacao(log_callback=lambda _: None)
+        self.assertEqual(outro.ids_passo2, set())
+
+    def test_avisa_ao_recuperar_exames_em_espera(self):
+        self.a.ids_passo2.add(("MARIA 40", "01/07/2026"))
+        self.a._salvar_estado()
+        registros = []
+        automacao.Automacao(log_callback=registros.append)
+        self.assertTrue(any("Estado recuperado" in r for r in registros))
+
+
+class AvisosDeProblema(SemNavegador):
+    def test_aviso_grave_sai_uma_vez_so(self):
+        for _ in range(5):
+            self.a._avisar_uma_vez("coluna_laudo", "coluna sumiu")
+        self.assertEqual(sum("coluna sumiu" in r for r in self.registros), 1,
+                         "o aviso repetido a cada ciclo inundaria o log")
+
+    def test_avisos_diferentes_saem_separados(self):
+        self.a._avisar_uma_vez("a", "problema A")
+        self.a._avisar_uma_vez("b", "problema B")
+        self.assertEqual(len(self.registros), 2)
+
+    def test_falha_repetida_do_passo3_vira_alerta(self):
+        chave = ("MARIA 40", "01/07/2026")
+        self.a._registrar_falha_passo3(chave, "MARIA 40 (01/07/2026)")
+        self.a._registrar_falha_passo3(chave, "MARIA 40 (01/07/2026)")
+        self.assertEqual(self.registros, [], "duas falhas ainda podem ser azar")
+
+        self.a._registrar_falha_passo3(chave, "MARIA 40 (01/07/2026)")
+        self.assertTrue(any("ATENÇÃO" in r and "3x" in r for r in self.registros),
+                        "na terceira falha seguida o exame precisa ser denunciado")
+
+    def test_contador_de_falhas_e_por_exame(self):
+        self.a._registrar_falha_passo3(("A", "1"), "A")
+        self.a._registrar_falha_passo3(("B", "2"), "B")
+        self.a._registrar_falha_passo3(("A", "1"), "A")
+        self.assertEqual(self.registros, [], "falhas de exames diferentes não se somam")
 
 
 if __name__ == "__main__":
