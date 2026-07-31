@@ -29,7 +29,80 @@ exatamente como estava.
 
 ---
 
+## ✅ LOG COLETADO — 31/07/2026, 08:24 às 09:00 (36,6 min)
+
+**Este era o objetivo do dia e está cumprido.** O que o log disse, medido sobre
+640 buscas e 7 marcações reais:
+
+| Operação | Vezes | Total | Média | Mín | Máx |
+|---|---|---|---|---|---|
+| `buscar_exames` | 640 | **1320,1s** | 2,06s | 2,04s | 2,25s |
+| `clicar_L_marcar` | 7 | 20,1s | 2,87s | 2,69s | 3,35s |
+| `passo3_desmarcar` | 2 | 2,6s | 1,30s | 0,33s | 2,28s |
+
+Sessão inteira: 2198s. Cronometrado: 1342,8s (61%).
+
+### As duas suspeitas principais foram REFUTADAS
+
+| Suspeita registrada em 30/07 | Medição real |
+|---|---|
+| `clicar_L_marcar` perto de **20s** (popup "Sim" não aparece e queima 4 seletores de 5s) | **2,87s de média, máximo 3,35s.** O popup aparece sempre: 7 marcações → 7 "Popup confirmado" → 7 "Ação L concluída". Nenhum seletor estourou o tempo limite. |
+| `passo3_desmarcar` perto de **30s** (estouraria o orçamento da checagem) | **1,30s de média, máximo 2,28s.** Longe dos 30s. |
+| `PROBLEMA GRAVE: coluna não encontrada` | **Nunca aconteceu.** A reconciliação rodou 37 vezes sem abortar. |
+
+**Lição:** as três hipóteses vinham de ler o código e contar tempos limite no
+papel. Nenhuma se confirmou. Reforça o aprendizado de 30/07 — sem medir, não
+otimizar. Só que agora vale nos dois sentidos: sem medir também não se sabe onde
+**não** está o problema.
+
+### O custo real: o `sleep(2)` do `buscar_exames`
+
+`automacao.py:873` — `time.sleep(2)` fixo depois de clicar em Buscar Exames.
+
+- 640 chamadas × ~2,06s = **1320s = 60% da sessão inteira**, e **98% de todo o
+  tempo cronometrado**.
+- A variação é de apenas 0,21s (2,04 a 2,25). Ou seja: o trabalho de verdade
+  leva ~0,05s e o `sleep` responde por 2,0s. É espera pura.
+- Ritmo do laço: uma busca a cada **3,43s** (359 intervalos de 3s, 259 de 4s).
+
+**Ligação com o problema 1 (perder marcações):** da hora em que um DX aparece
+até ele ficar marcado passam-se ~3,4s de espera pela próxima busca (média ~1,7s)
+somados a ~2,9s do `clicar_L_marcar` — cerca de **4,6s em média, ~6,3s no pior
+caso**. Tirar o `sleep(2)` derrubaria o ciclo de busca de 3,43s para ~1,4s.
+
+### Problema novo, não previsto: `stale element reference` (8 ocorrências)
+
+Não estava em nenhuma hipótese de 30/07. Chrome 150.0.7871.187.
+
+| Onde | Vezes |
+|---|---|
+| `Erro na etapa de varredura` | 6 |
+| `Erro no Passo 3` | 1 |
+| `Reconciliação falhou` / `Tabela mudou durante reconciliação` | 1 |
+
+Cada uma **mata a etapa inteira** e joga para o ciclo seguinte. Uma delas
+derrubou um Passo 3 — ou seja, é um caminho a mais para "fica marcado para
+sempre", independente da lista de espera já corrigida.
+
+### Atividade da sessão (para dimensionar)
+
+6 marcações pelo Passo 2 (DX), 1 pelo Passo 1, 2 desmarcações pela reconciliação
+(órfãos de sessão anterior — a persistência em `estado.json` funcionou).
+27 das 37 checagens encerraram na hora por não haver ninguém em espera.
+
+### Cuidado descoberto ao analisar
+
+A ocultação de nome do `resumo.txt` depende das aspas em `'nome (data)'`. A linha
+do Passo 1 (`automacao.py:480` e vizinhas) escreve `[Passo 1] NOME (data) — Mod...`
+**sem aspas**. Hoje ela não entra no `resumo.txt` (não casa com o filtro), mas
+qualquer mudança no filtro pode vazá-la. Ao analisar o `automacao.log` completo,
+agregar com cuidado — foi assim que um nome apareceu na conversa em 31/07.
+
+---
+
 ## O QUE FAZER AMANHÃ (31/07/2026) — outro computador
+
+> **Concluído.** Ver a seção do log acima. Mantido por registrar o procedimento.
 
 O objetivo é **coletar o log real**. Sem ele, qualquer otimização é chute — foi
 o que já custou duas rodadas de defeitos.
