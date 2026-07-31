@@ -1,7 +1,9 @@
 config.py
-automacao.log
+# padrao com * de proposito: o log contem nome de paciente e o hook Stop faz
+# 'git add .' — uma copia como automacao_antes.log nao pode escapar da regra
+automacao*.log
 estado.json
-resumo.txt
+resumo*.txt
 __pycache__/
 *.pyc
 .venv/

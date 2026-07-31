@@ -101,6 +101,18 @@ no `automacao.log` (só no arquivo, não na janela). **Na próxima coleta, procu
 assinaturas de liberação pequenas demais** (ex.: `1:12` quando a grade tem 25
 linhas) — seria a prova de que renderiza em etapas.
 
+**Linha de base guardada em 31/07/2026:** o log e o resumo da sessão do `sleep(2)`
+foram renomeados para `automacao_antes.log` (78381 bytes, 1372 linhas) e
+`resumo_antes.txt`, para o log novo nascer zerado e a comparação ficar limpa.
+
+Ao renomear, os padrões do `.gitignore` foram alargados de `automacao.log` e
+`resumo.txt` para `automacao*.log` e `resumo*.txt`. **Motivo:** os padrões eram
+nomes exatos, então `automacao_antes.log` — que contém nome de paciente — teria
+escapado da regra e o hook `Stop` (`git add .` + `push`) o mandaria para um
+repositório público. Mesmo tipo de falha do comando de extração corrigido mais
+acima. Regra a manter: **qualquer arquivo derivado do log entra no `.gitignore`
+antes de ser criado, nunca depois.**
+
 Comando para extrair, sem dado de paciente:
 
 ```powershell
