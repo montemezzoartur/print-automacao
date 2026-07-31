@@ -5,13 +5,62 @@ reversões. Ordem: o que vale agora primeiro, o histórico depois.
 
 ---
 
-## ESTADO ATUAL (30/07/2026)
+## ▶ COMEÇAR POR AQUI — próxima sessão (definido em 31/07/2026, fim do dia)
 
-**Branch de trabalho:** `otimiza-marcacao` — já enviada ao GitHub, **não mesclada** na `master`.
+**Tarefa: rodar mais 2 ou 3 sessões com o código atual, sem mexer em nada.**
+
+Motivo: os `stale element` caíram de 8 para 2, mas **2 eventos não sustentam
+conclusão nenhuma**. Precisamos de amostra antes de atacá-los, e as sessões
+extras também confirmam que a troca do `sleep(2)` é estável. Não custa nada.
+
+**Não alterar código enquanto isso.** Se surgir vontade de reduzir o teto de
+2,0s: é adivinhação. Quando o conteúdo é idêntico a assinatura não muda, então
+não existe medição de quanto o PACS realmente leva nesse caso.
+
+### Passo a passo para o Artur
+
+1. `cd C:\Users\artur\Desktop\Projetos\Print`
+2. `git branch --show-current` → **tem que responder `otimiza-marcacao`**.
+   Se responder `master`, rodar `git checkout otimiza-marcacao`.
+   A `master` não tem log, nem cronômetro, nem `[tabela]`, nem `estado.json` —
+   rodar nela não gera dado nenhum e ainda perde a correção do "marcado para sempre".
+3. `python main.py`, ativar no modo de sempre, deixar rodar, fechar.
+4. Repetir 2–3 vezes, **em horários diferentes** (manhã, meio-dia, fim de tarde).
+5. **Não renomear nada entre as sessões** — o log abre em modo append
+   (`automacao.py:76`) e acumula sozinho. As sessões se separam pelos intervalos
+   de tempo na análise.
+6. Só no fim, gerar o resumo uma vez (comando na seção "LOG COLETADO" abaixo).
+
+O `automacao.log` já contém a sessão de 11:04–11:26. As novas entram por cima.
+
+### O que analisar quando os dados chegarem
+
+| Pergunta | Como responder |
+|---|---|
+| Os `stale element` mantêm ~0,094/min ou os 2 foram sorte? | Taxa por minuto de cada sessão, não o total |
+| A proporção de 6,8% de buscas rápidas se confirma? | Contar `[tabela]` teto vs mudou |
+| A tabela alguma vez renderiza em etapas? | Procurar `[tabela]` com contagem de linha diferente do normal (43) ou muito baixa |
+| O agrupamento dos stale num segundo fixo é real? | Antes caíam aos `:11`, depois aos `:27` — ver se há padrão com mais amostra |
+
+**Só depois disso** decidir entre: mesclar na `master`, atacar os `stale element`,
+ou outra coisa. A branch segue **sem merge**.
+
+---
+
+## ESTADO ATUAL (atualizado em 31/07/2026)
+
+**Branch de trabalho:** `otimiza-marcacao` — enviada ao GitHub, **não mesclada** na `master`.
 **`master`:** intacta, exatamente como estava antes de começarmos.
 
-A branch contém **apenas o núcleo seguro**. Toda a tentativa de otimização de
-velocidade foi desfeita (o motivo está no histórico abaixo).
+> ⚠️ A tabela abaixo descrevia a branch em 30/07, quando ela era só "o núcleo
+> seguro" sem ganho de velocidade. **Isso mudou em 31/07**: a troca do `sleep(2)`
+> foi feita, revisada e validada em produção. Ver as seções seguintes.
+> O que continua valendo: as duas tentativas de otimização *anteriores* (leitura
+> por JavaScript e orçamento de tempo) seguem desfeitas, e por bom motivo.
+
+Além do que está na tabela, a branch hoje tem: `_esperar_tabela_pronta()` no lugar
+do `sleep(2)`, `_assinatura_tabela()`, `JS_ASSINATURA_TABELA`, o diagnóstico
+`[tabela]` no log e **53 testes** (eram 45).
 
 | O que a branch tem | Para que serve |
 |---|---|
@@ -23,9 +72,10 @@ velocidade foi desfeita (o motivo está no histórico abaixo).
 | Avisos de coluna ausente e de falha repetida do Passo 3 | Torna visível o que antes falhava calado. |
 | `test_automacao.py` | 45 testes, sem dependência nova (usa `unittest`, que vem no Python). |
 
-**O que a branch NÃO tem:** nenhum ganho de velocidade. O `sleep(2)` e os
-`sleep(1)` originais estão de volta. O problema 1 (perder marcações) continua
-exatamente como estava.
+**O que a branch NÃO tem** *(situação de 30/07 — parcialmente superada)*: os
+`sleep(1)` originais continuam lá. O `sleep(2)` **foi substituído em 31/07**. O
+problema 1 (perder marcações) melhorou ~1,6s no caminho crítico, mas não foi
+resolvido — ver a seção de validação em produção.
 
 ---
 
@@ -489,7 +539,16 @@ app rodando não funcionou. A velocidade volta ao assunto **depois** do log.
 
 ## ITENS EM ABERTO
 
-1. **Velocidade (problema 1)** — nada foi feito. Depende do log de amanhã.
+*(Lista de 30/07, com o estado de 31/07 anotado. Ordem de prioridade sugerida ao
+fim do dia 31/07: primeiro acumular sessões — ver "COMEÇAR POR AQUI" no topo —
+depois item 6, depois item 4.)*
+
+1. **Velocidade (problema 1)** — ~~nada foi feito~~ **parcialmente atacado em
+   31/07**: o `sleep(2)` virou espera adaptativa, economia de ~1,6s na busca que
+   detecta a mudança (o caminho crítico). Restam 93% das buscas custando o teto
+   de 2,0s, mas **reduzir esse teto é adivinhação** — quando o conteúdo é
+   idêntico a assinatura não muda e não há medição possível do tempo real.
+   O problema não está resolvido, só melhorado.
 2. **Colisão de chave.** A identidade de um exame é `(nome, data do exame)`.
    Dois exames do mesmo paciente na mesma data ficam indistinguíveis. Como a
    lista agora persiste em disco, o bloqueio virou permanente onde antes sumia
@@ -506,10 +565,48 @@ app rodando não funcionou. A velocidade volta ao assunto **depois** do log.
    da sessão do Selenium com a biblioteca `requests`. **Riscos a pesar:** é API
    interna e não documentada, pode mudar sem aviso; e vale confirmar se esse uso
    é aceitável nas regras da Print Imagem.
+6. **`stale element reference`** *(novo, descoberto em 31/07)*. 8 ocorrências na
+   1ª sessão, 2 na 2ª. Cada uma **mata a etapa inteira** — 6 derrubaram a
+   varredura, 1 derrubou um Passo 3 (mais um caminho para "marcado para sempre"),
+   1 derrubou a reconciliação. É o alvo com melhor retorno depois da coleta,
+   **mas 2 eventos não bastam para atacar.** Daí as sessões extras do topo.
 
 ---
 
-## APRENDIZADOS DESTA SESSÃO
+## APRENDIZADOS DE 31/07/2026
+
+- **Medir também serve para saber onde o problema NÃO está.** As três hipóteses
+  de 30/07 (popup queimando 20s, Passo 3 queimando 30s, coluna não encontrada)
+  vieram de ler código e somar tempos limite no papel. **Nenhuma se confirmou.**
+  Otimizar em cima delas teria sido a terceira rodada perdida.
+- **O code review pegou um defeito crítico que 53 testes verdes não pegaram.**
+  Com `antes=None`, a guarda de mudança virava letra morta e a espera liberava
+  com a tabela pré-busca — o mesmo defeito de `ea52da4` entrando por outra porta.
+  Rodar teste **não substitui** revisão. Confirma a regra do CLAUDE.md do projeto.
+- **Instrumentar responde o que raciocinar não responde.** O risco "a tabela pode
+  renderizar em etapas" era indecidível na discussão. Uma linha de log
+  (`[tabela] antes -> depois`) fechou a questão numa sessão: 29 liberações, todas
+  com 43 linhas antes e 43 depois. Quando uma dúvida travar a decisão, medir sai
+  mais barato que debater.
+- **Mutante que sobrevive nem sempre é falha de teste.** `ultima = antes` sozinho
+  sobreviveu à bateria — e está certo, porque a guarda `agora == antes` continua
+  barrando a tabela antiga. É um *mutante equivalente*. Antes de escrever teste
+  novo, checar se a mutação realmente muda o comportamento.
+- **Arquivo derivado do log entra no `.gitignore` ANTES de ser criado.** O mesmo
+  descuido apareceu três vezes num dia: o comando de extração copiava nome de
+  paciente para o `resumo.txt`; a classe de teste nova escrevia no `automacao.log`
+  real por não herdar `SemNavegador`; e `automacao_antes.log` ia escapar do
+  padrão de nome exato. Com o hook `Stop` fazendo `git add .` num repositório
+  público, cada um desses era um vazamento a um passo de acontecer.
+- **Declarar a expectativa antes de medir evita autoengano depois.** Ficou
+  registrado, antes da coleta, que o ganho seria pequeno no total porque busca com
+  resultado idêntico continuaria custando o teto. Deu 6,8% de buscas rápidas e ~4%
+  de economia total. Sem esse registro prévio, seria fácil vender os 1,6s do
+  caminho crítico como se fossem ganho geral.
+
+---
+
+## APRENDIZADOS DA SESSÃO DE 30/07/2026
 
 - **Sem medição, não otimizar.** Duas rodadas de defeitos críticos vieram de
   escrever otimização de tempo no escuro.
