@@ -27,6 +27,17 @@ CONJUNTOS_DE_ESTADO = ("ids_passo2", "ids_passo2_ct", "ids_passo3")
 # Convênios que valem para DX mas não para CT.
 CONVENIOS_SEM_CT = ("SAS", "FLIP", "ARAMART", "AVICOLA", "HI-MIX")
 
+# Impressão digital da tabela: quantidade de linhas e volume de texto. Serve só
+# para detectar que a busca recarregou a tabela, sem trazer o conteúdo todo.
+# textContent e não innerText: innerText depende do layout e força o navegador a
+# recalcular a página a cada leitura — são dezenas de leituras por busca.
+JS_ASSINATURA_TABELA = """
+const linhas = document.querySelectorAll('table tbody tr');
+let n = 0;
+for (const tr of linhas) { n += tr.textContent.length; }
+return linhas.length + ':' + n;
+"""
+
 
 def _cronometrar(nome):
     """Grava a duração da função no arquivo de log (não na janela do app)."""
@@ -853,6 +864,60 @@ class Automacao:
         while self.rodando and time.time() < ts_alvo:
             time.sleep(0.5)
 
+    def _assinatura_tabela(self):
+        """Impressão digital barata da tabela, para saber quando ela recarregou."""
+        try:
+            return self.driver.execute_script(JS_ASSINATURA_TABELA)
+        except Exception:
+            return None
+
+    def _esperar_tabela_pronta(self, antes, teto=2.0, estabilidade=0.3):
+        """Espera a tabela recarregar depois do clique em Buscar Exames.
+
+        Substitui um sleep(2) fixo. Só libera depois que a assinatura MUDA em
+        relação a `antes` e então fica parada por `estabilidade` segundos.
+
+        Exigir a mudança é o que evita repetir o defeito do commit ea52da4
+        (revertido): lá bastava a assinatura ficar parada, então o código liberava
+        com a tabela ANTIGA sempre que o PACS demorasse a responder.
+
+        O ganho aparece só quando a busca traz conteúdo diferente. Busca com
+        resultado idêntico — provavelmente a maioria — não muda a assinatura e
+        custa o `teto`, que vale o mesmo que o sleep antigo. Ou seja: o pior caso
+        é o comportamento de hoje, e a economia se concentra justamente na busca
+        que interessa, aquela em que um exame novo apareceu.
+        """
+        inicio = time.time()
+        if antes is None:
+            # A leitura pré-clique falhou. Sem referência para comparar, qualquer
+            # assinatura válida pareceria "mudou" já na primeira leitura — e seria
+            # a tabela ANTIGA. É o defeito de ea52da4 por outra porta.
+            time.sleep(teto)
+            self.log(f"[tabela] sem assinatura prévia — esperou o teto "
+                     f"({time.time() - inicio:.2f}s)", so_arquivo=True)
+            return
+
+        fim = inicio + teto
+        ultima = None
+        parada_desde = None
+        while time.time() < fim:
+            time.sleep(min(0.05, fim - time.time()))
+            agora = self._assinatura_tabela()
+            if agora is None or agora == antes:
+                continue
+            if agora != ultima:
+                ultima = agora
+                parada_desde = time.time()
+            elif time.time() - parada_desde >= estabilidade:
+                # Registra a assinatura em que liberou. Se aparecerem valores
+                # pequenos demais (ex.: '1:12'), é sinal de que a tabela renderiza
+                # em etapas e a espera está soltando num estado intermediário.
+                self.log(f"[tabela] {antes} -> {agora} em "
+                         f"{time.time() - inicio:.2f}s", so_arquivo=True)
+                return
+        self.log(f"[tabela] assinatura seguiu {antes} — teto "
+                 f"({time.time() - inicio:.2f}s)", so_arquivo=True)
+
     @_cronometrar("buscar_exames")
     def _clicar_buscar_exames(self):
         wait = WebDriverWait(self.driver, 10)
@@ -866,11 +931,12 @@ class Automacao:
             self.log("Botão 'Buscar Exames' não encontrado.")
             return False
 
+        antes = self._assinatura_tabela()
         try:
             botao.click()
         except Exception:
             self.driver.execute_script("arguments[0].click();", botao)
-        time.sleep(2)
+        self._esperar_tabela_pronta(antes)
         return True
 
     @_cronometrar("clicar_L_marcar")

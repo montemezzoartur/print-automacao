@@ -359,5 +359,146 @@ class AvisosDeProblema(SemNavegador):
         self.assertEqual(self.registros, [], "falhas de exames diferentes não se somam")
 
 
+class EsperarTabelaPronta(SemNavegador):
+    """Substitui o sleep(2) fixo do _clicar_buscar_exames.
+
+    O log de 31/07/2026 mostrou que esse sleep respondia por 1320s de uma sessão
+    de 2198s. A medição também mostrou variação de só 0,21s em 640 chamadas, ou
+    seja: é espera pura, não trabalho. O ganho real, porém, só aparece quando a
+    busca traz conteúdo diferente — busca com resultado idêntico continua
+    custando o teto inteiro, de propósito.
+
+    Uma tentativa anterior (commit ea52da4, revertida) errou exatamente aqui: ela
+    inicializava `ultima = antes` e nunca exigia que a assinatura mudasse, então
+    liberava com a TABELA ANTIGA sempre que o PACS demorasse mais que o tempo de
+    estabilidade. O primeiro teste desta classe existe para impedir a volta disso.
+
+    Herda de SemNavegador para que LOG_ARQUIVO e ESTADO_ARQUIVO apontem para uma
+    pasta temporária: sem isso os testes leem o estado.json real e escrevem no
+    automacao.log real — que contém nome de paciente e é o arquivo usado para
+    medir esta própria mudança.
+    """
+
+    def _com_assinaturas(self, sequencia):
+        """Faz _assinatura_tabela devolver a sequência dada, uma por chamada.
+
+        Depois de esgotada, repete o último valor — simula a tabela parada.
+        """
+        restantes = list(sequencia)
+        ultimo = [None]
+
+        def falsa():
+            if restantes:
+                ultimo[0] = restantes.pop(0)
+            return ultimo[0]
+
+        self.a._assinatura_tabela = falsa
+
+    def test_nao_libera_enquanto_a_tabela_nao_mudou(self):
+        """REGRESSÃO do bug revertido: assinatura igual à de antes não vale."""
+        self._com_assinaturas(["10:500"])          # nunca muda
+        t0 = time.time()
+        self.a._esperar_tabela_pronta("10:500", teto=0.3, estabilidade=0.05)
+        gasto = time.time() - t0
+        self.assertGreaterEqual(
+            gasto, 0.3,
+            "liberou sem a tabela ter mudado — é o bug de ea52da4 de volta")
+
+    def test_libera_assim_que_a_tabela_muda_e_estabiliza(self):
+        self._com_assinaturas(["10:500", "11:540"])   # muda e para
+        t0 = time.time()
+        self.a._esperar_tabela_pronta("10:500", teto=2.0, estabilidade=0.05)
+        gasto = time.time() - t0
+        # margem curta de propósito: com teto=2.0 um limite frouxo (ex.: 1.0s)
+        # seria satisfeito até pela implementação revertida de ea52da4
+        self.assertLess(gasto, 0.5,
+                        "tabela mudou e parou: não há motivo para esperar o teto")
+
+    def test_nunca_espera_mais_que_o_teto(self):
+        # assinatura sempre diferente: nunca estabiliza
+        contador = [0]
+
+        def nunca_para():
+            contador[0] += 1
+            return f"linha{contador[0]}"
+
+        self.a._assinatura_tabela = nunca_para
+        t0 = time.time()
+        self.a._esperar_tabela_pronta("inicial", teto=0.3, estabilidade=0.05)
+        gasto = time.time() - t0
+        # margem de um período de poll; frouxo demais não notaria o teto dobrar
+        self.assertLess(gasto, 0.45, "o teto precisa cortar a espera")
+
+    def test_teto_padrao_e_o_mesmo_do_sleep_antigo(self):
+        """O teto padrão precisa valer 2.0s — o mesmo do sleep que ele substitui.
+
+        Assim o pior caso do código novo é igual ao comportamento de hoje, nunca
+        pior. Valor literal aqui de propósito: se alguém mudar o padrão, este
+        teste reprova (aprendizado de 30/07 sobre testes que se auto-alimentam).
+        """
+        import inspect
+        padroes = inspect.signature(self.a._esperar_tabela_pronta).parameters
+        self.assertEqual(padroes["teto"].default, 2.0)
+
+    def test_sem_conseguir_ler_a_assinatura_cai_no_comportamento_de_hoje(self):
+        """_assinatura_tabela devolve None quando o JS falha (ela engole o erro).
+
+        Nesse caso não há como saber se a tabela recarregou, e a única escolha
+        segura é esperar o teto — que é exatamente o sleep fixo de hoje.
+        """
+        self.a._assinatura_tabela = lambda: None
+        t0 = time.time()
+        self.a._esperar_tabela_pronta(None, teto=0.3, estabilidade=0.05)
+        gasto = time.time() - t0
+        self.assertGreaterEqual(
+            gasto, 0.3,
+            "sem assinatura legível, encurtar a espera seria adivinhação")
+
+    def test_sem_referencia_anterior_espera_o_teto_inteiro(self):
+        """`antes=None` (a leitura pré-clique falhou) não pode virar atalho.
+
+        Com antes=None, a comparação `agora == antes` é falsa para QUALQUER
+        assinatura válida — então a primeira leitura boa passaria por 'a tabela
+        mudou', mesmo sendo a tabela velha. É o defeito de ea52da4 entrando por
+        outra porta. Sem referência de comparação, o único caminho honesto é
+        esperar o teto.
+        """
+        self._com_assinaturas(["10:500"])   # leitura válida, tabela ainda a antiga
+        t0 = time.time()
+        self.a._esperar_tabela_pronta(None, teto=0.3, estabilidade=0.05)
+        gasto = time.time() - t0
+        self.assertGreaterEqual(
+            gasto, 0.3,
+            "sem antes para comparar, liberar cedo é ler a tabela pré-busca")
+
+    def test_leitura_falhando_no_meio_nao_conta_como_mudanca(self):
+        """Um None solto no meio da espera não é 'a tabela mudou'.
+
+        Se o guarda `agora is None` sumir, None vira um valor diferente de
+        `antes`, estabiliza sozinho e libera a espera sem tabela nova nenhuma.
+        """
+        self.a._assinatura_tabela = lambda: None
+        t0 = time.time()
+        self.a._esperar_tabela_pronta("10:500", teto=0.3, estabilidade=0.05)
+        gasto = time.time() - t0
+        self.assertGreaterEqual(
+            gasto, 0.3, "None é ausência de leitura, não uma tabela nova")
+
+    def test_nao_libera_na_primeira_mudanca_sem_estabilizar(self):
+        """A tabela pode chegar em etapas: primeiro um placeholder, depois os dados.
+
+        Liberar na primeira mudança leria justamente o estado intermediário. É
+        preciso esperar a assinatura PARAR de mudar.
+        """
+        # muda no 1º poll, muda de novo no 2º, só então para
+        self._com_assinaturas(["1:12", "25:1900"])
+        t0 = time.time()
+        self.a._esperar_tabela_pronta("10:500", teto=2.0, estabilidade=0.2)
+        gasto = time.time() - t0
+        self.assertGreaterEqual(
+            gasto, 0.2,
+            "liberou na primeira mudança, sem esperar a tabela assentar")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,95 @@ exatamente como estava.
 
 ---
 
+## TROCA DO `sleep(2)` — 31/07/2026 (feita, aguardando validação em produção)
+
+Primeira otimização de velocidade do projeto feita **em cima de medição**, e não
+de leitura de código. As duas anteriores foram revertidas; esta nasceu do log da
+seção seguinte.
+
+**O que mudou** (`automacao.py`, 4 pontos):
+
+| Onde | O quê |
+|---|---|
+| `JS_ASSINATURA_TABELA` (novo) | `linhas.length + ':' + soma dos textContent`. Impressão digital barata da tabela. |
+| `_assinatura_tabela()` (novo) | Lê a assinatura; devolve `None` em qualquer falha. |
+| `_esperar_tabela_pronta()` (novo) | Substitui o `sleep(2)`. Libera quando a assinatura **muda** e depois **fica parada** por 0,3s. Teto de 2,0s. |
+| `_clicar_buscar_exames()` | Uma linha: `time.sleep(2)` → `self._esperar_tabela_pronta(antes)`. |
+
+**Por que exige que a assinatura MUDE:** é exatamente o que faltava em `ea52da4`.
+Lá bastava ficar parada, e o código liberava com a tabela antiga.
+
+**Expectativa realista, para não repetir o erro de projetar no escuro:** o ganho
+só aparece quando a busca traz conteúdo **diferente**. Busca com resultado
+idêntico continua custando o teto de 2,0s de propósito. Como a grade mostra 25
+linhas cobrindo ~2h de exames e as buscas são a cada 3,4s, boa parte delas
+provavelmente não muda nada. **Portanto: o tempo total da sessão deve mudar
+pouco.** O ganho se concentra na busca que importa — aquela em que o exame novo
+apareceu, que é o problema 1.
+
+### Code review — 8 achados, 1 crítico
+
+O crítico era real e **verificado por execução** pelo revisor:
+
+> Com `antes = None` (a leitura pré-clique falhou), a comparação `agora == antes`
+> é falsa para qualquer assinatura válida — então a **primeira leitura boa**
+> passava por "a tabela mudou", sendo ela a tabela **antiga**. Medido: liberava em
+> 0,35s com a tabela pré-busca. Era o defeito de `ea52da4` entrando por outra
+> porta, no ponto de maior severidade do projeto.
+
+Corrigido com uma guarda no topo: `antes is None` → dorme o teto e sai.
+
+Também corrigidos: teto estourando até +85,8ms (agora limitado ao custo de uma
+chamada JS, medido entre +0,4ms e +40,9ms); `innerText` → `textContent` (o
+primeiro força recálculo de layout a cada uma das ~40 leituras por busca); duas
+asserções frouxas demais para morder; e a classe de teste nova passou a herdar de
+`SemNavegador` — sem isso ela **escrevia nome de paciente no `automacao.log`
+real**, justamente o arquivo usado para medir esta mudança.
+
+### Teste de mutação — 6 mutantes
+
+| Mutante | Resultado |
+|---|---|
+| Remove a guarda `antes is None` | pego |
+| Libera na primeira mudança, sem estabilizar | pego |
+| Remove a guarda `agora is None` | pego |
+| Teto padrão 2.0 → 5.0 | pego |
+| `ea52da4` completo (init errado + guarda de mudança removida) | pego |
+| Só `ultima = antes`, mantendo a guarda | **sobreviveu — e está certo** |
+
+O último é um **mutante equivalente**: sozinho ele não muda o comportamento,
+porque a guarda `agora == antes` continua barrando a tabela antiga. O bug de
+`ea52da4` precisava das duas coisas juntas. Sobreviver aqui não é falha de teste.
+
+### O que ficou em aberto (Important #2 do review)
+
+A janela de estabilidade de 0,3s **não distingue** "terminou de renderizar" de
+"parou no meio". Se o PACS renderiza em etapas (um placeholder, depois os dados),
+a espera pode soltar no estado intermediário. O revisor demonstrou o mecanismo em
+código, mas **se o PACS faz isso ou não é hipótese** — só a sessão real diz.
+
+Por isso `_esperar_tabela_pronta` grava uma linha `[tabela] antes -> depois em Ns`
+no `automacao.log` (só no arquivo, não na janela). **Na próxima coleta, procurar
+assinaturas de liberação pequenas demais** (ex.: `1:12` quando a grade tem 25
+linhas) — seria a prova de que renderiza em etapas.
+
+Comando para extrair, sem dado de paciente:
+
+```powershell
+Get-Content automacao.log -Encoding UTF8 |
+  Select-String -Pattern "\[tempo\]|\[tabela\]|PROBLEMA|ATEN|Erro" |
+  ForEach-Object { $_.Line -replace "'[^']*\([0-9/]+\)'", "'[paciente oculto]'" } |
+  Set-Content resumo.txt -Encoding UTF8
+```
+
+Hipótese adicional do revisor, **não confirmada**: 5 dos 6 `stale element` da
+varredura caíram exatamente aos `:11` de cada minuto, sugerindo re-renderização
+periódica do PACS num ponto fixo do ciclo de 60s. Se for isso, adiantar a
+varredura em ~1,65s muda quais buscas colidem com ela — direção imprevisível sem
+medir. Mais um motivo para comparar os dois logs.
+
+---
+
 ## ✅ LOG COLETADO — 31/07/2026, 08:24 às 09:00 (36,6 min)
 
 **Este era o objetivo do dia e está cumprido.** O que o log disse, medido sobre
