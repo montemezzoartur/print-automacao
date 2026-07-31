@@ -29,6 +29,69 @@ exatamente como estava.
 
 ---
 
+## ✅ VALIDAÇÃO EM PRODUÇÃO DA TROCA DO `sleep(2)` — 31/07/2026, 11:04 às 11:26
+
+Segunda coleta, com o código novo. Comparação contra `resumo_antes.txt`.
+
+| | ANTES (36,6 min) | DEPOIS (21,3 min) |
+|---|---|---|
+| `buscar_exames` — média | 2,06s | **1,94s** |
+| `buscar_exames` — mínimo | 2,04s | **0,47s** |
+| Ciclo entre buscas | 3,43s | **3,00s** |
+| Buscas | 640 | 426 |
+| `stale element` por minuto | 0,218 | 0,094 |
+
+### O ganho é pequeno no total e grande onde importa
+
+**93,2% das buscas (397 de 426) foram até o teto** — a tabela não mudou. Só
+**6,8% (29)** pegaram o caminho rápido. Foi exatamente o previsto ao projetar, e
+está registrado acima que seria assim.
+
+Economia total: ~0,12s × 426 ≈ **51s numa sessão de 21 min (~4%)**. Modesto.
+
+Mas na busca que **detecta a mudança** — a que decide se o exame novo é pego —
+o tempo caiu de 2,06s para **~0,47s**, ou seja **1,6s a menos no caminho
+crítico**. Nas 3 marcações da sessão, a busca que detectou a mudança rodou em
+0,48s / 0,49s / 0,48s. Em 2 das 3 ela veio imediatamente antes da marcação.
+
+### O risco em aberto (Important #2) NÃO se materializou
+
+Era a dúvida que sobrou do code review: a janela de estabilidade poderia soltar
+num estado intermediário se o PACS renderizasse a tabela em etapas.
+
+**As 29 liberações antecipadas tiveram 43 linhas antes e 43 linhas depois, todas.**
+Nenhuma contagem parcial, nenhuma tabela vazia. O que mudou foi só o volume de
+texto (dezenas de caracteres — convênio preenchido, realizante, status de laudo).
+Os tempos ficaram agrupados em 0,43–0,51s, coerente com 0,1–0,2s até a mudança
+aparecer mais os 0,3s de estabilidade.
+
+**Conclusão: este PACS não monta a tabela em etapas.** Risco encerrado — foi a
+instrumentação `[tabela]` que permitiu fechar essa questão, não raciocínio.
+
+### O caminho do Critical #1 não foi exercitado
+
+Zero ocorrências de `sem assinatura prévia` — a leitura pré-clique funcionou nas
+426 buscas. A guarda continua necessária (o revisor demonstrou em Chrome real que
+o estado é alcançável), mas nesta sessão não foi acionada.
+
+### `stale element`: caiu, mas a amostra é pequena demais
+
+8 em 36,6 min → 2 em 21,3 min (0,218/min → 0,094/min, −57%). **Com n=2 isso não
+sustenta conclusão** — pode ser variação normal. O que dá para afirmar é que
+**não piorou**, que era o risco levantado no review.
+
+Detalhe curioso: o agrupamento num segundo fixo do minuto persistiu, mas mudou de
+fase — antes 5 de 6 caíam aos `:11`, agora os 2 caíram aos `:27`. Consistente com
+re-renderização periódica do PACS, mas indistinguível de acaso com 2 eventos.
+
+### Ressalva de comparabilidade
+
+As sessões não são gêmeas: horários diferentes (08:24 vs 11:04), durações
+diferentes (36,6 vs 21,3 min) e movimento diferente (0,19 vs 0,14 marcações/min).
+As médias por busca e as taxas por minuto são comparáveis; os totais absolutos não.
+
+---
+
 ## TROCA DO `sleep(2)` — 31/07/2026 (feita, aguardando validação em produção)
 
 Primeira otimização de velocidade do projeto feita **em cima de medição**, e não
