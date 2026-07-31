@@ -50,6 +50,24 @@ o que já custou duas rodadas de defeitos.
    usado e deixar rodar **15–20 minutos em horário de movimento**.
 7. Fechar o app.
 
+### Estado verificado em 31/07/2026 — `C:\Users\artur\Desktop\Projetos\Print`
+
+Os passos 1 a 5 **já estão feitos** nesta máquina. Conferido por execução:
+
+| Item | Situação |
+|---|---|
+| Python | 3.12.10 instalado |
+| selenium | 4.21.0 instalado |
+| `config.py` | existe, com `USUARIO='Artur'` e senha preenchida |
+| Branch | `otimiza-marcacao` ativa |
+| `test_automacao.py` | 45 testes, todos passaram |
+| `iniciar.bat` | **não existe** (é gerado pelo `instalar.bat` e está no `.gitignore`) |
+| `automacao.log` / `estado.json` | ainda não existem — vão nascer na primeira execução |
+
+Como não há `iniciar.bat`, o jeito direto de abrir é `python main.py` na pasta
+do projeto. Rodar o `instalar.bat` também funciona e é seguro — ele só cria o
+`config.py` `if not exist`, então não sobrescreve as credenciais.
+
 Vai aparecer o `automacao.log` na pasta.
 
 **Cuidado com esse arquivo:** ele contém nome de paciente e data de exame. Está
@@ -58,10 +76,28 @@ acessível pela internet). Para extrair só o que interessa, sem dado de pacient
 rodar no PowerShell dentro da pasta do projeto:
 
 ```powershell
-Select-String automacao.log -Pattern "\[tempo\]|PROBLEMA|ATENÇÃO|Erro" | ForEach-Object { $_.Line } | Set-Content resumo.txt
+Get-Content automacao.log -Encoding UTF8 |
+  Select-String -Pattern "\[tempo\]|PROBLEMA|ATEN|Erro" |
+  ForEach-Object { $_.Line -replace "'[^']*\([0-9/]+\)'", "'[paciente oculto]'" } |
+  Set-Content resumo.txt -Encoding UTF8
 ```
 
 É o `resumo.txt` que interessa analisar.
+
+> **Correção de 31/07/2026 — o comando anterior vazava nome de paciente.**
+> A versão que estava aqui era
+> `Select-String automacao.log -Pattern "..." | ForEach-Object { $_.Line } | Set-Content resumo.txt`.
+> Testada com um log de exemplo, ela copiava a linha
+> `ATENÇÃO: desmarcação falhou 3x seguidas em 'MARIA DA SILVA SANTOS (30/07/2026)'`
+> inteira para o `resumo.txt` — porque `rotulo = f"{nome} ({data_exame})"`
+> (`automacao.py:333`) carrega o nome do paciente. Somado a isso, `resumo.txt`
+> **não estava no `.gitignore`** e o hook `Stop` roda `git add .` + `push`
+> sozinho: o nome iria para um repositório público sem ninguém perceber.
+> Duas correções: `resumo.txt` entrou no `.gitignore`, e o comando agora
+> substitui `'nome (data)'` por `'[paciente oculto]'`.
+> Os outros dois ajustes do comando: `Get-Content -Encoding UTF8` (o log é UTF-8
+> sem BOM e o `Select-String` do PowerShell 5.1 assume ANSI) e `ATEN` no lugar de
+> `ATENÇÃO` no padrão, para não depender de acento na comparação.
 
 **Se der problema:** `git checkout master` volta ao código antigo. Nada foi mesclado.
 
